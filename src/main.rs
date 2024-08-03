@@ -5,6 +5,8 @@ use std::sync::mpsc::channel;
 use std::net::UdpSocket;
 use std::sync::{Mutex, Arc};
 use audio_sync::audio;
+use ringbuf::HeapRb;
+use ringbuf::traits::{Split, Producer};
 
 #[allow(unused_attributes)]
 #[macro_use]
@@ -56,9 +58,11 @@ fn main () {
     debug_println!("AUDIO: OUTPUT AUDIO CONFIG: {:?}", output_config);
     let input_device = Arc::new(Mutex::new(input_device));
     let input_config = Arc::new(Mutex::new(input_config));
-    let audio_buffer = Arc::new(Mutex::new(Vec::new()));
-    debug_println!("AUDIO: Allocated audio buffer: {:?}", audio_buffer);
-    let received_data = Arc::clone(&audio_buffer);
+
+    let audio_buffer = HeapRb::<u8>::new(960 * 10);
+    let (producer, consumer) = audio_buffer.split();
+    let received_data = Arc::new(Mutex::new(producer));
+    let consumer = Arc::new(Mutex::new(consumer));
 
     // Data Structures
     let user_table: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(std::collections::HashMap::new()));
@@ -107,8 +111,8 @@ fn main () {
             match udp_socket.lock().unwrap().recv(&mut buffer) {
                 Ok(size) => {
                     debug_println!("UDP: Amount of bytes received {}", size);
-                    let mut data = received_data_clone.lock().unwrap();
-                    data.extend_from_slice(&buffer[..size]);
+                    let mut received_data = received_data_clone.lock().unwrap();
+                    received_data.push_slice(&buffer[..size]);
                 }
                 Err(e) => {
                     eprintln!("Failed to receive data: {}", e);
@@ -176,13 +180,14 @@ fn main () {
         }
     });
 
+    // Output Stream Init
     debug_println!("AUDIO: Starting output stream");
     #[allow(unused_variables)]
     let output_stream = audio::start_output_stream(
         &output_device,
         &output_config,
-        received_data.clone()
-    ).expect("MAIN: Failed to start output stream");
+        consumer.clone()
+    ).expect("AUDIO: Failed to start output stream");
 
 
     // ----------- mDNS Service Thread ----------//
@@ -190,7 +195,7 @@ fn main () {
     // Configure Service
     debug_println!("NET: Commencing mDNS Service");
     let mdns = mdns_sd::ServiceDaemon::new().expect("mDNS: Failed to create daemon");
-    let service_type = "_udp_voice._tcp.local.";
+    let service_type = "_udp_voice._udp.local.";
     debug_println!("NET: Connecting to Local IP address: {}", ip);
     let host_name =  hostname::get()
         .expect("NET: Unable to get host name");
@@ -227,7 +232,7 @@ fn main () {
                 match event {
                     mdns_sd::ServiceEvent::ServiceResolved(info) => {
                         debug_println!("mDNS: Service resolved: {:?}", info);
-                        // Send request to create tcp connection
+                        // Send request to create udp connection
                         let addresses = info.get_addresses_v4();
                         debug_println!("mDNS: Addresses found: {:?}", addresses);
                         for address in addresses {
@@ -253,6 +258,6 @@ fn main () {
                     }
                 }
             }
-            debug_println!("THREAD 3: Restarting Loop");
+            debug_println!("mDNS: Restarting Loop");
     }
 }

@@ -8,6 +8,10 @@ use std::time::Duration;
 use opus::{Encoder, Decoder, Application};
 use opus::Channels;
 use std::sync::mpsc::{self, Sender, Receiver};
+use ringbuf::SharedRb;
+use ringbuf::traits::{Observer, Consumer};
+use ringbuf::wrap::caching::Caching;
+use ringbuf::storage::Heap;
 
 const SAMPLE_RATE: u32 = 48000;
 const CHANNELS: usize = 2;
@@ -159,7 +163,7 @@ pub fn start_input_stream(
 //        Start Output Stream
 // ============================================
 pub fn start_output_stream(output_device: &cpal::Device, config: &cpal::StreamConfig,
-    received_data: Arc<Mutex<Vec<u8>>>) -> Result<cpal::Stream, cpal::BuildStreamError> {
+    received_data: Arc<Mutex<Caching<Arc<SharedRb<Heap<u8>>>, false, true>>>) -> Result<cpal::Stream, cpal::BuildStreamError> {
     // Start the audio input/output stream
     let output_buffer_clone = Arc::clone(&received_data);
 
@@ -167,23 +171,28 @@ pub fn start_output_stream(output_device: &cpal::Device, config: &cpal::StreamCo
         &config,
         move |output_data: &mut [f32], _: &cpal::OutputCallbackInfo| {
             let mut buffer = output_buffer_clone.lock().unwrap();
-            if !buffer.is_empty() {
-                    match decode_opus_to_pcm(&buffer) {
-                        Ok(pcm_data) => {
-                            for (i, sample) in output_data.iter_mut().enumerate() {
-                                if i < pcm_data.len() {
-                                    *sample = pcm_data[i];
-                                } else {
-                                    *sample = 0.0;
-                                }
-                            }
-                            buffer.clear();
-                        }
-                        Err(err) =>
-                            println!("AUDIO SYNC I: Opus decoding error: {}", err),
+            
+            let mut temp_buffer = vec![0u8; 960];
+            let mut pcm_data = Vec::new();
+            
+            while buffer.occupied_len() >= temp_buffer.len() {
+                buffer.pop_slice(&mut temp_buffer);
+                match decode_opus_to_pcm(&temp_buffer) {
+                    Ok(decoded) => pcm_data.extend(decoded),
+                    Err(err) => {
+                        println!("AUDIO SYNC I: Opus decoding error: {}", err);
+                        break;
                     }
                 }
-            },
+            }
+            for (i, sample) in output_data.iter_mut().enumerate() {
+                if i < pcm_data.len() {
+                    *sample = pcm_data[i];
+                } else {
+                    *sample = 0.0;
+                }
+            }
+        },
         |err| println!("AUDIO SYNC I: An error occured on the output audio stream: {}", err),
         None
     );

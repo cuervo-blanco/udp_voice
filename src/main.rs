@@ -124,26 +124,30 @@ fn main () {
         let mut buffer = [0; 960];
         debug_println!("UDP: Allocated memory for buffering {:?}", buffer);
         loop {
-            match udp_socket.lock() {
-                Ok(udp_socket) => match udp_socket.recv(&mut buffer) {
-                    Ok(size) => {
-                        debug_println!("UDP: Amount of bytes received {}", size);
-                        match bincode::deserialize::<Vec<u8>>(&buffer[..size]){
-                            Ok(deserialized_data) => match producer_clone.lock() {
-                                Ok(mut producer) => {
-                                    debug_println!("Succesfully locked producer");
-                                    producer.push_slice(&deserialized_data);
-                                },
-                                Err(e) => {
-                                    eprintln!("Failed to lock on to producer {}", e);
+            debug_println!("Waiting to acquire socket lock");
+            match udp_socket.try_lock() {
+                Ok(udp_socket) => { 
+                    debug_println!("UDP: Succesfully acquired socket lock");
+                    match udp_socket.recv(&mut buffer) {
+                        Ok(size) => {
+                            debug_println!("UDP: Amount of bytes received {}", size);
+                            match bincode::deserialize::<Vec<u8>>(&buffer[..size]){
+                                Ok(deserialized_data) => match producer_clone.lock() {
+                                    Ok(mut producer) => {
+                                        debug_println!("Succesfully locked producer");
+                                        producer.push_slice(&deserialized_data);
+                                    },
+                                    Err(e) => {
+                                        eprintln!("Failed to lock on to producer {}", e);
+                                    }
+                                }, Err(e) => {
+                                    eprintln!("Failed to deserialize data: {}", e);
                                 }
-                            }, Err(e) => {
-                                eprintln!("Failed to deserialize data: {}", e);
                             }
                         }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to receive data: {}", e);
+                        Err(e) => {
+                            eprintln!("Failed to receive data: {}", e);
+                        }
                     }
                 }
                 Err(e) => eprintln!("Failed to lock UDP socket: {}", e)
@@ -189,7 +193,7 @@ fn main () {
                                                                     debug_println!("UDP: Initial Slice to send: {:?}", slice);
                                                                     match udp_socket.lock() {
                                                                         Ok(udp_socket) => {
-                                                                            debug_println!("Succesfully locked into udp_socket_2: {:?}", udp_socket);
+                                                                            debug_println!("Succesfully locked into udp socket: {:?}", udp_socket);
                                                                             match user_table.lock() {
                                                                                 Ok(user_table) => {
                                                                                     debug_println!("UDP: Locked into user table {:?}", user_table);

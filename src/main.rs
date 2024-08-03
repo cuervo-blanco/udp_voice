@@ -127,10 +127,10 @@ fn main () {
         let mut buffer = [0; 960];
         debug_println!("UDP: Allocated memory for buffering {:?}", buffer);
         loop {
-            debug_println!("UDP: Waiting to acquire socket lock");
+            // debug_println!("UDP: Waiting to acquire socket lock");
             match udp_socket.try_lock() {
                 Ok(udp_socket) => { 
-                    debug_println!("UDP: Succesfully acquired socket lock");
+                    // debug_println!("UDP: Succesfully acquired socket lock");
                         match udp_socket.recv(&mut buffer) {
                             Ok(size) => {
                                 debug_println!("UDP: Amount of bytes received {}", size);
@@ -149,7 +149,7 @@ fn main () {
                                 }
                             }
                             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                debug_println!("UDP: recv would block");
+                                // debug_println!("UDP: recv would block");
                             }
                             Err(e) => {
                                 eprintln!("Failed to receive data: {}", e);
@@ -158,7 +158,7 @@ fn main () {
                 },
                 Err(e) => eprintln!("Failed to lock UDP socket: {}", e)
             }
-            debug_println!("UDP: Looping for next receive");
+            // debug_println!("UDP: Looping for next receive");
             std::thread::sleep(Duration::from_millis(100));
         }
     });
@@ -260,14 +260,6 @@ fn main () {
         }
     });
 
-    thread::spawn( || {
-        loop {
-            let socket = UdpSocket::bind("0.0.0.0:0").expect("Couldn't bind to address");
-            socket.connect("192.168.50.130:18522").expect("Couldn't connect to server");
-            socket.send(b"Hello, world!").expect("Couldn't send data");
-            std::thread::sleep(Duration::from_secs(1));
-        }
-    });
 
     // ----------- mDNS Service Thread ----------//
 

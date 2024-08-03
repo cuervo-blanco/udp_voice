@@ -4,7 +4,7 @@
 use cpal::platform::Host;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use opus::{Encoder, Decoder, Application};
 use opus::Channels;
 use std::sync::mpsc::{self, Sender, Receiver};
@@ -12,6 +12,7 @@ use ringbuf::SharedRb;
 use ringbuf::traits::{Observer, Consumer};
 use ringbuf::wrap::caching::Caching;
 use ringbuf::storage::Heap;
+use std::thread;
 
 const SAMPLE_RATE: u32 = 48000;
 const CHANNELS: usize = 2;
@@ -122,12 +123,16 @@ pub fn start_input_stream(
     let buffer_clone = Arc::clone(&audio_buffer);
     let timeout: Duration = Duration::from_secs(5);
 
+    let last_received = Arc::new(Mutex::new(Instant::now()));
+    let last_received_clone = Arc::clone(&last_received);
+
     let stream = input_device.build_input_stream(
             &config,
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
                 let mut buffer = buffer_clone.lock()
                     .expect("AUDIO SYNC I: Failed to lock buffer"); 
                 buffer.extend_from_slice(data);
+                *last_received_clone.lock().expect("Failed to lock last_received") = Instant::now();
                 // Process the buffer if it has enough data for one frame
                 while buffer.len() >= FRAME_SIZE * CHANNELS {
                     let frame: Vec<f32> = buffer.drain(0..FRAME_SIZE * CHANNELS).collect();
@@ -144,6 +149,20 @@ pub fn start_input_stream(
             |err| println!("AUDIO SYNC I: An error occured on the input audio stream: {}", err),
                 Some(timeout)
                 );
+
+    thread::spawn(move || {
+        loop {
+            {
+                let last_received = last_received.lock().expect("Failed to lock last_received");
+                if last_received.elapsed() < Duration::from_secs(1) {
+                    println!("AUDIO SYNC I: Receiving audio input...");
+                } else {
+                    println!("AUDIO SYNC I: No audio input received in the last second.");
+                }
+            }
+            thread::sleep(Duration::from_secs(1));
+        }
+    });
 
     match stream {
         Ok(s) => {

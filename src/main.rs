@@ -42,6 +42,7 @@ fn main () {
 
     //---- Audio Setup-----//
 
+    debug_println!("INFO: Instance Name saved as: {:?}", instance_name);
     debug_println!("AUDIO: AUDIO INITIALIZATION IN PROCESS");
     let (Some(input_device), Some(output_device)) = audio::initialize_audio_interface() else {
         debug_println!("AUDIO: AUDIO INITIALIZATION FAILED");
@@ -61,7 +62,7 @@ fn main () {
 
     let audio_buffer = HeapRb::<u8>::new(960 * 10);
     let (producer, consumer) = audio_buffer.split();
-    let received_data = Arc::new(Mutex::new(producer));
+    let producer = Arc::new(Mutex::new(producer));
     let consumer = Arc::new(Mutex::new(consumer));
 
     // Data Structures
@@ -89,30 +90,49 @@ fn main () {
     });
 
 
+    // Output Stream Init
+    debug_println!("AUDIO: Starting output stream");
+    #[allow(unused_variables)]
+    let output_stream = audio::start_output_stream(
+        &output_device,
+        &output_config,
+        consumer.clone()
+    ).expect("AUDIO: Failed to start output stream");
     
 
     // ----------- UDP Setup and Thread ----------//
 
     // Create UDP socket
     let ip =  local_ip_address::local_ip().unwrap();
+    debug_println!("UDP: Local IP Address: {}", ip);
     let port: u16 = 18522;
     let ip_port = format!("{}:{}", ip, port);
+    debug_println!("UDP: IP Address & Port: {}", ip);
     let udp_socket = Arc::new(Mutex::new(UdpSocket::bind(ip_port).expect("UDP: Couldn't bind to address")));
     // Create Service
 
-    let received_data_clone = Arc::clone(&received_data);
+    let producer_clone = Arc::clone(&producer);
     let udp_socket_clone: Arc<Mutex<UdpSocket>> = Arc::clone(&udp_socket);
 
     thread::spawn( move || {
-        debug_println!("UDP: Starting UDP reception");
+
+        debug_println!("UDP: Starting UDP receiver");
         let udp_socket = udp_socket_clone.clone();
         let mut buffer = [0; 960];
         loop {
             match udp_socket.lock().unwrap().recv(&mut buffer) {
                 Ok(size) => {
-                    debug_println!("UDP: Amount of bytes received {}", size);
-                    let mut received_data = received_data_clone.lock().unwrap();
-                    received_data.push_slice(&buffer[..size]);
+                    // Deserialize the incoming data
+                    match bincode::deserialize::<Vec<u8>>(&buffer[..size]){
+                        Ok(deserialized_data) => {
+                            debug_println!("UDP: Amount of bytes received {}", size);
+                            let mut producer = producer_clone.lock().unwrap();
+                            producer.push_slice(&deserialized_data);
+                            
+                        } Err(e) => {
+                            eprintln!("Failed to deserialize data: {}", e);
+                        }
+                    }
                 }
                 Err(e) => {
                     eprintln!("Failed to receive data: {}", e);
@@ -121,11 +141,6 @@ fn main () {
         }
     });
 
-    for (user, socket) in user_table.lock().unwrap().iter() {
-        debug_println!("UDP: Connecting to {} on {}", user, socket);
-        let message = format!("Failed to connect to {}", user);
-        udp_socket.lock().unwrap().connect(socket).expect(&message);
-    };
     // ---- Sending Audio - Read User Input ----//
 
     let udp_socket_clone_2: Arc<Mutex<UdpSocket>> = Arc::clone(&udp_socket);
@@ -157,15 +172,23 @@ fn main () {
                             // Handle encoded data (await)
                             if let Ok(opus_data) = receiver.lock().unwrap().recv() {
                                 let slice: &[u8] = &opus_data;
-                                debug_println!("UDP: Opus Data received: {:?}", slice);
                                 let udp_socket_2 = udp_socket_2.lock().unwrap();
                                 let user_table_2 = user_table.lock().unwrap();
+                                let encoded_audio: Vec<u8> = bincode::serialize(slice).unwrap();
+
+                                for (user, socket) in user_table_2.iter() {
+                                    debug_println!("UDP: Connecting to {} on {}", user, socket);
+                                    let message = format!("Failed to connect to {}", user);
+                                    udp_socket_2.connect(socket).expect(&message);
+                                };
+
                                 for (user, socket) in user_table_2.iter() {
                                     debug_println!("UDP: Sending audio to {}", user);
                                     if *user == *instance_name.lock().unwrap() {
                                         continue;
                                     }
-                                    udp_socket_2.send_to(slice, socket).expect("Failed to send data");
+                                    debug_println!("Sending Audio to {}", user);
+                                    udp_socket_2.send_to(&encoded_audio, socket).expect("Failed to send data");
                                 };
                             }
                         } 
@@ -180,14 +203,6 @@ fn main () {
         }
     });
 
-    // Output Stream Init
-    debug_println!("AUDIO: Starting output stream");
-    #[allow(unused_variables)]
-    let output_stream = audio::start_output_stream(
-        &output_device,
-        &output_config,
-        consumer.clone()
-    ).expect("AUDIO: Failed to start output stream");
 
 
     // ----------- mDNS Service Thread ----------//

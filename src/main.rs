@@ -218,6 +218,7 @@ fn main () {
                                                                                         if *user == *instance_name.lock().unwrap() {
                                                                                             continue;
                                                                                         }
+                                                                                        let socket = format!("{}:{}", socket, port);
                                                                                         debug_println!("Sending Audio to {}", user);
                                                                                         if let Err(e) = udp_socket.send_to(&encoded_audio, socket) {
                                                                                             eprintln!("Failed to send data to {}: {}", user, e);
@@ -307,10 +308,9 @@ fn main () {
                         let addresses = info.get_addresses_v4();
                         debug_println!("mDNS: Addresses found: {:?}", addresses);
                         for address in addresses {
-                            let user_socket = format!("{}:{}", address, info.get_port());
-                            debug_println!("mDNS: UDP Socket: {:?}", user_socket);
+                            debug_println!("mDNS: Found User in IP Address: {:?}", address);
                             // --------- Udp Connection ---------//
-                            user_table.lock().unwrap().insert(info.get_fullname().to_string(), user_socket);
+                            user_table.lock().unwrap().insert(info.get_fullname().to_string(), address.to_string());
                             debug_println!("mDNS: Inserted New User Into User Table: {:?}", info.get_fullname());
                             let mut username = String::new();
                             debug_println!("mDNS: Username: {:?}", username);

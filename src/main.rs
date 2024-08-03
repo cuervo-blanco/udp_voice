@@ -206,23 +206,19 @@ fn main () {
                                                                                 Ok(user_table) => {
                                                                                     debug_println!("UDP: Locked into user table {:?}", user_table);
                                                                                     let encoded_audio: Vec<u8> = bincode::serialize(slice).unwrap();
-                                                                                    for (user, socket) in user_table.iter() {
-                                                                                        let socket = format!("{}:{}", socket, port);
-                                                                                        debug_println!("UDP: Connecting to {} on {}", user, socket);
-                                                                                        let message = format!("Failed to connect to {}", user);
-                                                                                        if let Err(e) = udp_socket.connect(socket) {
-                                                                                            eprintln!("{}: {}", message, e);
-                                                                                        }
-                                                                                    }
                                                                                     loop {
                                                                                         for (user, socket) in user_table.iter() {
-                                                                                            debug_println!("UDP: Sending audio to {}", user);
                                                                                             if *user == *instance_name.lock().unwrap() {
                                                                                                 continue;
                                                                                             }
                                                                                             let socket = format!("{}:{}", socket, port);
-                                                                                            debug_println!("Sending Audio to {}", user);
-                                                                                            if let Err(e) = udp_socket.send_to(&encoded_audio, socket) {
+                                                                                            debug_println!("UDP: Connecting to {} on {}", user, socket);
+                                                                                            let message = format!("Failed to connect to {}", user);
+                                                                                            if let Err(e) = udp_socket.connect(socket) {
+                                                                                                eprintln!("{}: {}", message, e);
+                                                                                            }
+                                                                                            debug_println!("UDP: Sending audio to {}", user);
+                                                                                            if let Err(e) = udp_socket.send(&encoded_audio) {
                                                                                                 eprintln!("Failed to send data to {}: {}", user, e);
                                                                                             }
                                                                                         }

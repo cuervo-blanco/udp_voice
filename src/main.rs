@@ -106,17 +106,20 @@ fn main () {
     let ip =  local_ip_address::local_ip().unwrap();
     debug_println!("UDP: Local IP Address: {}", ip);
     let port: u16 = 18522;
+    #[allow(unused_variables)]
     let ip_port = format!("{}:{}", ip, port);
     debug_println!("UDP: IP Address & Port: {}", ip);
-    let udp_socket = Arc::new(Mutex::new(UdpSocket::bind(ip_port).expect("UDP: Couldn't bind to address")));
+    let receive_socket = Arc::new(Mutex::new(UdpSocket::bind((ip, port)).expect("UDP: Couldn't bind to address")));
+    let send_socket = Arc::new(Mutex::new(UdpSocket::bind((ip, port+1)).expect("UDP: Couldn't bind to address")));
+
     // Create Service
 
     let producer_clone = Arc::clone(&producer);
-    let udp_socket_clone: Arc<Mutex<UdpSocket>> = Arc::clone(&udp_socket);
+    let receive_socket_clone: Arc<Mutex<UdpSocket>> = Arc::clone(&receive_socket);
 
     thread::spawn( move || {
         debug_println!("UDP: Starting UDP receiver");
-        let udp_socket = udp_socket_clone.clone();
+        let udp_socket = receive_socket_clone.clone();
         debug_println!("UDP: Receiving in Socket {:?}", udp_socket);
         let mut buffer = [0; 960];
         debug_println!("UDP: Allocated memory for buffering {:?}", buffer);
@@ -150,7 +153,7 @@ fn main () {
 
     // ---- Sending Audio - Read User Input ----//
 
-    let udp_socket_clone_2: Arc<Mutex<UdpSocket>> = Arc::clone(&udp_socket);
+    let send_socket_clone: Arc<Mutex<UdpSocket>> = Arc::clone(&send_socket);
     let user_table_clone = Arc::clone(&user_table);
     let instance_name_copy = Arc::clone(&instance_name);
 
@@ -170,42 +173,49 @@ fn main () {
                                             Ok((stream, receiver)) => {
                                                 let receiver = Arc::new(Mutex::new(receiver));
                                                 input_stream = Some((stream, Arc::clone(&receiver)));
-                                                let udp_socket_2 = Arc::clone(&udp_socket_clone_2);
+                                                let udp_socket = Arc::clone(&send_socket_clone);
                                                 let user_table = Arc::clone(&user_table_clone);
                                                 let instance_name = Arc::clone(&instance_name_copy);
                                                 debug_println!("UDP: Udp Socket stream and receiver initialized");
                                                 
                                                 thread::spawn(move || {
+                                                    debug_println!("UDP: Receiving Thread Initialized");
                                                     loop {
                                                         match receiver.lock() {
                                                             Ok(receiver) => match receiver.recv() {
                                                                 Ok(opus_data) => {
+                                                                    debug_println!("UDP: Preparing to send opus data");
                                                                     let slice: &[u8] = &opus_data;
-                                                                    match udp_socket_2.lock() {
-                                                                        Ok(udp_socket_2) => match user_table.lock() {
-                                                                            Ok(user_table_2) => {
-                                                                                let encoded_audio: Vec<u8> = bincode::serialize(slice).unwrap();
-                                                                                for (user, socket) in user_table_2.iter() {
-                                                                                    debug_println!("UDP: Connecting to {} on {}", user, socket);
-                                                                                    let message = format!("Failed to connect to {}", user);
-                                                                                    if let Err(e) = udp_socket_2 .connect(socket) {
-                                                                                        eprintln!("{}: {}", message, e);
+                                                                    debug_println!("UDP: Initial Slice to send: {:?}", slice);
+                                                                    match udp_socket.lock() {
+                                                                        Ok(udp_socket) => {
+                                                                            debug_println!("Succesfully locked into udp_socket_2: {:?}", udp_socket);
+                                                                            match user_table.lock() {
+                                                                                Ok(user_table) => {
+                                                                                    debug_println!("UDP: Locked into user table {:?}", user_table);
+                                                                                    let encoded_audio: Vec<u8> = bincode::serialize(slice).unwrap();
+                                                                                    for (user, socket) in user_table.iter() {
+                                                                                        debug_println!("UDP: Connecting to {} on {}", user, socket);
+                                                                                        let message = format!("Failed to connect to {}", user);
+                                                                                        if let Err(e) = udp_socket.connect(socket) {
+                                                                                            eprintln!("{}: {}", message, e);
+                                                                                        }
                                                                                     }
-                                                                                }
-                                                                                for (user, socket) in user_table_2.iter() {
-                                                                                    debug_println!("UDP: Sending audio to {}", user);
-                                                                                    if *user == *instance_name.lock().unwrap() {
-                                                                                        continue;
+                                                                                    for (user, socket) in user_table.iter() {
+                                                                                        debug_println!("UDP: Sending audio to {}", user);
+                                                                                        if *user == *instance_name.lock().unwrap() {
+                                                                                            continue;
+                                                                                        }
+                                                                                        debug_println!("Sending Audio to {}", user);
+                                                                                        if let Err(e) = udp_socket.send_to(&encoded_audio, socket) {
+                                                                                            eprintln!("Failed to send data to {}: {}", user, e);
+                                                                                        }
                                                                                     }
-                                                                                    debug_println!("Sending Audio to {}", user);
-                                                                                    if let Err(e) = udp_socket_2.send_to(&encoded_audio, socket) {
-                                                                                        eprintln!("Failed to send data to {}: {}", user, e);
-                                                                                    }
-                                                                                }
-                                                                                
-                                                                            },
-                                                                            Err(e) => eprintln!("Failed to lock user_table: {}", e),
-                                                                        },
+
+                                                                                },
+                                                                                Err(e) => eprintln!("Failed to lock user_table: {}", e),
+                                                                            }
+                                                                        }
                                                                         Err(e) => eprintln!("Failed to lock udp socket {}", e),
                                                                     }
 

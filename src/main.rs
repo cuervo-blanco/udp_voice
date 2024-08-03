@@ -115,28 +115,35 @@ fn main () {
     let udp_socket_clone: Arc<Mutex<UdpSocket>> = Arc::clone(&udp_socket);
 
     thread::spawn( move || {
-
         debug_println!("UDP: Starting UDP receiver");
         let udp_socket = udp_socket_clone.clone();
+        debug_println!("UDP: Receiving in Socket {:?}", udp_socket);
         let mut buffer = [0; 960];
+        debug_println!("UDP: Allocated memory for buffering {:?}", buffer);
         loop {
-            match udp_socket.lock().unwrap().recv(&mut buffer) {
-                Ok(size) => {
-                    // Deserialize the incoming data
-                    match bincode::deserialize::<Vec<u8>>(&buffer[..size]){
-                        Ok(deserialized_data) => {
-                            debug_println!("UDP: Amount of bytes received {}", size);
-                            let mut producer = producer_clone.lock().unwrap();
-                            producer.push_slice(&deserialized_data);
-                            
-                        } Err(e) => {
-                            eprintln!("Failed to deserialize data: {}", e);
+            match udp_socket.lock() {
+                Ok(udp_socket) => match udp_socket.recv(&mut buffer) {
+                    Ok(size) => {
+                        debug_println!("UDP: Amount of bytes received {}", size);
+                        match bincode::deserialize::<Vec<u8>>(&buffer[..size]){
+                            Ok(deserialized_data) => match producer_clone.lock() {
+                                Ok(mut producer) => {
+                                    debug_println!("Succesfully locked producer");
+                                    producer.push_slice(&deserialized_data);
+                                },
+                                Err(e) => {
+                                    eprintln!("Failed to lock on to producer {}", e);
+                                }
+                            }, Err(e) => {
+                                eprintln!("Failed to deserialize data: {}", e);
+                            }
                         }
                     }
+                    Err(e) => {
+                        eprintln!("Failed to receive data: {}", e);
+                    }
                 }
-                Err(e) => {
-                    eprintln!("Failed to receive data: {}", e);
-                }
+                Err(e) => eprintln!("Failed to lock UDP socket: {}", e)
             }
         }
     });

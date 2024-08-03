@@ -207,6 +207,7 @@ fn main () {
                                                                                     debug_println!("UDP: Locked into user table {:?}", user_table);
                                                                                     let encoded_audio: Vec<u8> = bincode::serialize(slice).unwrap();
                                                                                     for (user, socket) in user_table.iter() {
+                                                                                        let socket = format!("{}:{}", socket, port);
                                                                                         debug_println!("UDP: Connecting to {} on {}", user, socket);
                                                                                         let message = format!("Failed to connect to {}", user);
                                                                                         if let Err(e) = udp_socket.connect(socket) {

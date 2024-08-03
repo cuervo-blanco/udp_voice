@@ -158,54 +158,82 @@ fn main () {
         debug_println!("Starting audio input thread");
         let mut input_stream = None;
         loop {
-            let command = rx.recv().unwrap();
-            if command == "audio.start()" {
-                debug_println!("AUDIO: Starting Input Device");
-                if input_stream.is_none() {
-                    let (stream, receiver) = 
-                        audio::start_input_stream(
-                            &input_device.lock().unwrap(),
-                            &input_config.lock().unwrap()
-                        )
-                        .expect("UDP: Failed to start input stream");
-                    let receiver = Arc::new(Mutex::new(receiver));
-                    input_stream = Some((stream, Arc::clone(&receiver)));
-                    let udp_socket_2 = Arc::clone(&udp_socket_clone_2);
-                    let user_table = Arc::clone(&user_table_clone);
-                    let instance_name = Arc::clone(&instance_name_copy);
-                    debug_println!("UDP: Udp Socket stream and receiver initialized");
-                    thread::spawn(move || {
-                        loop {
-                            // Handle encoded data (await)
-                            if let Ok(opus_data) = receiver.lock().unwrap().recv() {
-                                let slice: &[u8] = &opus_data;
-                                let udp_socket_2 = udp_socket_2.lock().unwrap();
-                                let user_table_2 = user_table.lock().unwrap();
-                                let encoded_audio: Vec<u8> = bincode::serialize(slice).unwrap();
+            match rx.recv() {
+                Ok(command) => {
+                    if command == "audio.start()" {
+                        debug_println!("AUDIO: Starting Input Device");
+                        if input_stream.is_none() {
+                            match input_device.lock() {
+                                Ok(input_device) => match input_config.lock() {
+                                    Ok(input_config) => {
+                                        match audio::start_input_stream(&input_device, &input_config) {
+                                            Ok((stream, receiver)) => {
+                                                let receiver = Arc::new(Mutex::new(receiver));
+                                                input_stream = Some((stream, Arc::clone(&receiver)));
+                                                let udp_socket_2 = Arc::clone(&udp_socket_clone_2);
+                                                let user_table = Arc::clone(&user_table_clone);
+                                                let instance_name = Arc::clone(&instance_name_copy);
+                                                debug_println!("UDP: Udp Socket stream and receiver initialized");
+                                                
+                                                thread::spawn(move || {
+                                                    loop {
+                                                        match receiver.lock() {
+                                                            Ok(receiver) => match receiver.recv() {
+                                                                Ok(opus_data) => {
+                                                                    let slice: &[u8] = &opus_data;
+                                                                    match udp_socket_2.lock() {
+                                                                        Ok(udp_socket_2) => match user_table.lock() {
+                                                                            Ok(user_table_2) => {
+                                                                                let encoded_audio: Vec<u8> = bincode::serialize(slice).unwrap();
+                                                                                for (user, socket) in user_table_2.iter() {
+                                                                                    debug_println!("UDP: Connecting to {} on {}", user, socket);
+                                                                                    let message = format!("Failed to connect to {}", user);
+                                                                                    if let Err(e) = udp_socket_2 .connect(socket) {
+                                                                                        eprintln!("{}: {}", message, e);
+                                                                                    }
+                                                                                }
+                                                                                for (user, socket) in user_table_2.iter() {
+                                                                                    debug_println!("UDP: Sending audio to {}", user);
+                                                                                    if *user == *instance_name.lock().unwrap() {
+                                                                                        continue;
+                                                                                    }
+                                                                                    debug_println!("Sending Audio to {}", user);
+                                                                                    if let Err(e) = udp_socket_2.send_to(&encoded_audio, socket) {
+                                                                                        eprintln!("Failed to send data to {}: {}", user, e);
+                                                                                    }
+                                                                                }
+                                                                                
+                                                                            },
+                                                                            Err(e) => eprintln!("Failed to lock user_table: {}", e),
+                                                                        },
+                                                                        Err(e) => eprintln!("Failed to lock udp socket {}", e),
+                                                                    }
 
-                                for (user, socket) in user_table_2.iter() {
-                                    debug_println!("UDP: Connecting to {} on {}", user, socket);
-                                    let message = format!("Failed to connect to {}", user);
-                                    udp_socket_2.connect(socket).expect(&message);
-                                };
+                                                                },
+                                                                Err(e) => eprintln!("Failed to receive opus data: {}", e),
+                                                            },
+                                                            Err(e) => eprintln!("Failed to lock receiver: {}", e),
 
-                                for (user, socket) in user_table_2.iter() {
-                                    debug_println!("UDP: Sending audio to {}", user);
-                                    if *user == *instance_name.lock().unwrap() {
-                                        continue;
+                                                        }
+                                                    } 
+                                                });
+                                            },
+                                            Err(e) => eprintln!("AUDIO: Failed to start input stream: {}", e),
+                                        }
                                     }
-                                    debug_println!("Sending Audio to {}", user);
-                                    udp_socket_2.send_to(&encoded_audio, socket).expect("Failed to send data");
-                                };
+                                    Err(e) => eprintln!("Failed to lock input_config: {}", e),
+                                }
+                                Err(e) => eprintln!("Failed to lock input device: {}", e),
                             }
-                        } 
-                    });
+                        }
+                    } else if command == "audio.stop()" {
+                        if let Some((stream, _)) = input_stream.take() {
+                            debug_println!("AUDIO STOP COMMAND RECEIVED");
+                            audio::stop_audio_stream(stream);
+                        }
+                    }
                 }
-            } else if command == "audio.stop()" {
-                if let Some((stream, _)) = input_stream.take() {
-                    debug_println!("AUDIO STOP COMMAND RECEIVED");
-                    audio::stop_audio_stream(stream);
-                }
+                Err(e) => eprintln!("Failed to receive command: {}", e),
             }
         }
     });

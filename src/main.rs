@@ -201,12 +201,12 @@ fn main () {
                                                                     debug_println!("UDP: Initial Slice to send: {:?}", slice);
                                                                     match udp_socket.lock() {
                                                                         Ok(udp_socket) => {
-                                                                            debug_println!("Succesfully locked into udp socket: {:?}", udp_socket);
+                                                                            debug_println!("UDP: Succesfully locked into udp socket: {:?}", udp_socket);
                                                                             match user_table.lock() {
                                                                                 Ok(user_table) => {
                                                                                     debug_println!("UDP: Locked into user table {:?}", user_table);
                                                                                     let encoded_audio: Vec<u8> = bincode::serialize(slice).unwrap();
-                                                                                    loop {
+                                                                                    debug_println!("UDP: Encoded Slice to send: {:?}", encoded_audio);
                                                                                         for (user, socket) in user_table.iter() {
                                                                                             if *user == *instance_name.lock().unwrap() {
                                                                                                 continue;
@@ -222,7 +222,6 @@ fn main () {
                                                                                                 eprintln!("Failed to send data to {}: {}", user, e);
                                                                                             }
                                                                                         }
-                                                                                    }
 
                                                                                 },
                                                                                 Err(e) => eprintln!("Failed to lock user_table: {}", e),

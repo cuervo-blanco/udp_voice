@@ -167,7 +167,6 @@ fn main () {
 
     let send_socket_clone: Arc<Mutex<UdpSocket>> = Arc::clone(&send_socket);
     let user_table_clone = Arc::clone(&user_table);
-    let instance_name_copy = Arc::clone(&instance_name);
 
     thread::spawn(move || {
         debug_println!("Starting audio input thread");
@@ -187,7 +186,6 @@ fn main () {
                                                 input_stream = Some((stream, Arc::clone(&receiver)));
                                                 let udp_socket = Arc::clone(&send_socket_clone);
                                                 let user_table = Arc::clone(&user_table_clone);
-                                                let instance_name = Arc::clone(&instance_name_copy);
                                                 debug_println!("UDP: Udp Socket stream and receiver initialized");
                                                 
                                                 thread::spawn(move || {
@@ -207,11 +205,8 @@ fn main () {
                                                                                     debug_println!("UDP: Locked into user table {:?}", user_table);
                                                                                     let encoded_audio: Vec<u8> = bincode::serialize(slice).unwrap();
                                                                                     debug_println!("UDP: Encoded Slice to send: {:?}", encoded_audio);
-                                                                                    for (user, socket) in user_table.iter() {
-                                                                                        if *user == *instance_name.lock().unwrap() {
-                                                                                            continue;
-                                                                                        }
-                                                                                        let socket_addr = format!("{}:{}", socket, port);
+                                                                                    for (user, ip) in user_table.iter() {
+                                                                                        let socket_addr = format!("{}:18522", ip);
                                                                                         debug_println!("UDP: Connecting to {} on {}", user, socket_addr);
                                                                                         let message = format!("Failed to connect to {}", user);
                                                                                         if let Err(e) = udp_socket.connect(&socket_addr) {

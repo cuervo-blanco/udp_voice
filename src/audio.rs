@@ -63,36 +63,25 @@ pub fn initialize_audio_interface() -> (Option<cpal::Device>, Option<cpal::Devic
 //            Get Audio Config
 // ============================================
 pub fn get_audio_config(device: &cpal::Device) -> Result<cpal::StreamConfig, cpal::DefaultStreamConfigError> {
-    let config = match device.default_output_config() {
+    let _config = match device.default_output_config() {
         Ok(cnfg) => cnfg,
         Err(e) => {
             println!("AUDIO SYNC I: Unable to get default config: {}", e);
 
             // Try to find a supported configuration
-            if let Ok(mut supported_configs) = device.supported_output_configs() {
-                if let Some(supported_config) = supported_configs.next() {
-                    println!("Using a supported configuration instead.");
-                    return Ok(cpal::StreamConfig {
-                        channels: supported_config.channels(),
-                        sample_rate: supported_config.min_sample_rate(),
-                        buffer_size: cpal::BufferSize::Fixed(256),
-                    });
-                }
-            }
-            
             let config =  cpal::StreamConfig {
                 channels: 2,
-                sample_rate: cpal::SampleRate(44100),
-                buffer_size: cpal::BufferSize::Fixed(256),
+                sample_rate: cpal::SampleRate(48000),
+                buffer_size: cpal::BufferSize::Fixed(512),
             };
             return Ok(config);
         }
     };
 
     let config =  cpal::StreamConfig {
-        channels: config.channels(),
-        sample_rate: config.sample_rate(),
-        buffer_size: cpal::BufferSize::Fixed(256),
+        channels: 2,
+        sample_rate: cpal::SampleRate(48000),
+        buffer_size: cpal::BufferSize::Fixed(512),
     };
 
     Ok(config)
@@ -191,7 +180,7 @@ pub fn start_output_stream(output_device: &cpal::Device, config: &cpal::StreamCo
         move |output_data: &mut [f32], _: &cpal::OutputCallbackInfo| {
             let mut buffer = output_buffer_clone.lock().unwrap();
             
-            let mut temp_buffer = vec![0u8; 960];
+            let mut temp_buffer = vec![0u8; FRAME_SIZE];
             let mut pcm_data = Vec::new();
             
             while buffer.occupied_len() >= temp_buffer.len() {
@@ -261,7 +250,7 @@ pub fn convert_audio_stream_to_opus(input_stream: &[f32]) -> Result<Vec<u8>, opu
 // ============================================
 // Decode an audio stream  from Oputs format to PCM format
 pub fn decode_opus_to_pcm(opus_data: &[u8]) -> Result<Vec<f32>, opus::Error> {
-    let mut decoder = Decoder::new(SAMPLE_RATE, Channels::Stereo)?;
+    let mut decoder = Decoder::new(SAMPLE_RATE, Channels::Mono)?;
     let mut pcm_data = vec![0.0; opus_data.len() * 1];
     // FEC (Forward Error Correction) set to false
     let decoded_samples = decoder.decode_float(opus_data, &mut pcm_data, false)?;

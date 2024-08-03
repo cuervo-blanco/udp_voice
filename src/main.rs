@@ -61,7 +61,7 @@ fn main () {
     let input_device = Arc::new(Mutex::new(input_device));
     let input_config = Arc::new(Mutex::new(input_config));
 
-    let audio_buffer = HeapRb::<u8>::new(960);
+    let audio_buffer = HeapRb::<u8>::new(960 * 10);
     let (producer, consumer) = audio_buffer.split();
     let producer = Arc::new(Mutex::new(producer));
     let consumer = Arc::new(Mutex::new(consumer));

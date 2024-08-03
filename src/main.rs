@@ -214,15 +214,17 @@ fn main () {
                                                                                             eprintln!("{}: {}", message, e);
                                                                                         }
                                                                                     }
-                                                                                    for (user, socket) in user_table.iter() {
-                                                                                        debug_println!("UDP: Sending audio to {}", user);
-                                                                                        if *user == *instance_name.lock().unwrap() {
-                                                                                            continue;
-                                                                                        }
-                                                                                        let socket = format!("{}:{}", socket, port);
-                                                                                        debug_println!("Sending Audio to {}", user);
-                                                                                        if let Err(e) = udp_socket.send_to(&encoded_audio, socket) {
-                                                                                            eprintln!("Failed to send data to {}: {}", user, e);
+                                                                                    loop {
+                                                                                        for (user, socket) in user_table.iter() {
+                                                                                            debug_println!("UDP: Sending audio to {}", user);
+                                                                                            if *user == *instance_name.lock().unwrap() {
+                                                                                                continue;
+                                                                                            }
+                                                                                            let socket = format!("{}:{}", socket, port);
+                                                                                            debug_println!("Sending Audio to {}", user);
+                                                                                            if let Err(e) = udp_socket.send_to(&encoded_audio, socket) {
+                                                                                                eprintln!("Failed to send data to {}: {}", user, e);
+                                                                                            }
                                                                                         }
                                                                                     }
 

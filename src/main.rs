@@ -157,7 +157,6 @@ fn main () {
             }
             // debug_println!("UDP: Looping for next receive");
             if let Some(_packet) = jitter_buffer.get_next_packet() {
-                debug_println!("Jitter Buffer: Retrieved packet size: {}", packet.len());
                 match producer.lock() {
                     Ok(mut producer) => {
                         let test_tone = audio::play_test_tone();

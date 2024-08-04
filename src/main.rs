@@ -129,7 +129,7 @@ fn main () {
         debug_println!("UDP: Starting UDP receiver");
         let udp_socket = receive_socket_clone.clone();
         debug_println!("UDP: Receiving in Socket {:?}", udp_socket);
-        let mut buffer = [0; 960];
+        let mut buffer = [0; 2048];
         debug_println!("UDP: Allocated memory for buffering {:?}", buffer);
         loop {
             // debug_println!("UDP: Waiting to acquire socket lock");

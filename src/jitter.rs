@@ -35,9 +35,13 @@ impl JitterBuffer {
             if let Some(packet) = self.buffer.pop_front() {
                 println!("JITTER: popped from buffer: {:?}", packet);
                 if packet.len() >= FRAME_SIZE * CHANNELS * 2 {
-                    println!("JITTER: Packer length: {:?}", packet.len());
+                    println!("JITTER: Packet length: {:?}", packet.len());
                     return Some(packet);
                     
+                } else {
+                    println!("Packet length ({}) is bigger than {}", packet.len(), FRAME_SIZE * CHANNELS * 2);
+                    println!("Nothing to be done");
+
                 }
             }
         }

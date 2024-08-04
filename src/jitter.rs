@@ -21,6 +21,7 @@ impl JitterBuffer {
 
     pub fn add_packet(&mut self, packet: Vec<u8>) {
         if self.buffer.len() < JITTER_BUFFER_SIZE {
+            println!("JITTER: Pushing back packet: {:?}", packet);
             self.buffer.push_back(packet);
         } else {
             self.buffer.pop_front();
@@ -29,10 +30,13 @@ impl JitterBuffer {
     }
     pub fn get_next_packet(&mut self) -> Option<Vec<u8>> {
         let now = Instant::now();
+        println!("JITTER: Instant: {:?}", now);
         if now.duration_since(self.last_playback_time) >= Duration::from_millis(PACKET_DURATION_MS) {
             self.last_playback_time = now;
             if let Some(packet) = self.buffer.pop_front() {
+                println!("JITTER: popped from buffer: {:?}", packet);
                 if packet.len() >= FRAME_SIZE * CHANNELS * 2 {
+                    println!("JITTER: Packer length: {:?}", packet.len());
                     return Some(packet);
                     
                 }

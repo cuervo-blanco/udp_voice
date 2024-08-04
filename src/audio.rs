@@ -173,7 +173,9 @@ pub fn start_input_stream(
 pub fn start_output_stream(output_device: &cpal::Device, config: &cpal::StreamConfig,
     received_data: Arc<Mutex<Caching<Arc<SharedRb<Heap<u8>>>, false, true>>>) -> Result<cpal::Stream, cpal::BuildStreamError> {
     // Start the audio input/output stream
+    
     let output_buffer_clone = Arc::clone(&received_data);
+    println!("OUTPUT: Received data for playback");
 
     let stream = output_device.build_output_stream(
         &config,
@@ -185,8 +187,12 @@ pub fn start_output_stream(output_device: &cpal::Device, config: &cpal::StreamCo
             
             while buffer.occupied_len() >= temp_buffer.len() {
                 buffer.pop_slice(&mut temp_buffer);
+                println!("OUTPUT: Popped slice from buffer and placed into temp_buffer");
                 match decode_opus_to_pcm(&temp_buffer) {
-                    Ok(decoded) => pcm_data.extend(decoded),
+                    Ok(decoded) => { 
+                        println!("OUTPUT: Successfull decoding to pcm: {:?}", decoded);
+                        pcm_data.extend(decoded);
+                    },
                     Err(err) => {
                         println!("AUDIO SYNC I: Opus decoding error: {}", err);
                         break;

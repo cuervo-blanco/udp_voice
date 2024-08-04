@@ -141,7 +141,7 @@ fn main () {
                                 debug_println!("UDP: Amount of bytes received {}", size);
                                 if let Ok(rtp) = RtpReader::new(&buffer[..size]) {
                                     let payload = rtp.payload();
-                                    debug_println!("UDP: Payload size: {}", payload.len());
+                                    debug_println!("UDP: Payload Received: {:?}", payload);
                                     jitter_buffer.add_packet(payload.to_vec());
                                 }
                             }
@@ -156,12 +156,12 @@ fn main () {
                 Err(e) => eprintln!("Failed to lock UDP socket: {}", e)
             }
             // debug_println!("UDP: Looping for next receive");
-            if let Some(_packet) = jitter_buffer.get_next_packet() {
+            if let Some(packet) = jitter_buffer.get_next_packet() {
+                debug_println!("Packet to push into producer: {:?}", packet);
                 match producer.lock() {
                     Ok(mut producer) => {
-                        let test_tone = audio::play_test_tone();
-                        
-                        producer.push_slice(&test_tone);
+                        debug_println!("Successfully locked into producer");
+                        producer.push_slice(&packet);
                     }
                     Err(e) => eprintln!("Failed to lock producer: {}", e),
                 }
@@ -209,7 +209,7 @@ fn main () {
                                                         match receiver.lock() {
                                                             Ok(receiver) => match receiver.recv() {
                                                                 Ok(opus_data) => {
-                                                                    debug_println!("UDP: Preparing to send opus data");
+                                                                    debug_println!("AUDIO: Opus Data to Send: {:?}", opus_data);
                                                                     let packet = RtpPacketBuilder::new()
                                                                         .payload_type(111)
                                                                         .ssrc(ssrc)
@@ -223,6 +223,7 @@ fn main () {
                                                                     timestamp += samples_per_packet;
 
                                                                     if let Ok(packet) = packet {
+                                                                        debug_println!("Opus Data pressed into RTP packet: {:?}", packet);
                                                                         let udp_socket = Arc::clone(&udp_socket);
                                                                         let user_table = Arc::clone(&user_table);
                                                                         thread::spawn(move || {
@@ -238,9 +239,11 @@ fn main () {
                                                                                                 if let Err(e) = udp_socket.connect(&socket_addr) {
                                                                                                     eprintln!("{}: {}", message, e);
                                                                                                 } else {
-                                                                                                    debug_println!("UDP: Sending audio to {}", user);
+                                                                                                    debug_println!("UDP: Sending audio to {} in socket {}", user, socket_addr);
                                                                                                     if let Err(e) = udp_socket.send(&packet) {
                                                                                                         eprintln!("Failed to send data to {}: {}", user, e);
+                                                                                                    } else {
+                                                                                                        debug_println!("UDP: Sending packet: {:?}", packet);
                                                                                                     }
 
                                                                                                 }

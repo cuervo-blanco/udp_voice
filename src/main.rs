@@ -143,6 +143,17 @@ fn main () {
                                     let payload = rtp.payload();
                                     debug_println!("UDP: Payload Received: {:?}", payload);
                                     jitter_buffer.add_packet(payload.to_vec());
+                                    if let Some(packet) = jitter_buffer.get_next_packet() {
+                                        debug_println!("RTP: Packet to push into producer: {:?}", packet);
+                                        match producer.lock() {
+                                            Ok(mut producer) => {
+                                                debug_println!("RTP: Successfully locked into producer");
+                                                producer.push_slice(&packet);
+                                            }
+                                            Err(e) => eprintln!("RTP: Failed to lock producer: {}", e),
+                                        }
+
+                                    }
                                 }
                             }
                             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -156,17 +167,6 @@ fn main () {
                 Err(e) => eprintln!("Failed to lock UDP socket: {}", e)
             }
             // debug_println!("UDP: Looping for next receive");
-            if let Some(packet) = jitter_buffer.get_next_packet() {
-                debug_println!("Packet to push into producer: {:?}", packet);
-                match producer.lock() {
-                    Ok(mut producer) => {
-                        debug_println!("Successfully locked into producer");
-                        producer.push_slice(&packet);
-                    }
-                    Err(e) => eprintln!("Failed to lock producer: {}", e),
-                }
-
-            }
             std::thread::sleep(Duration::from_millis(5));
         }
     });

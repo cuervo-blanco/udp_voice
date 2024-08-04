@@ -141,6 +141,7 @@ fn main () {
                                 debug_println!("UDP: Amount of bytes received {}", size);
                                 if let Ok(rtp) = RtpReader::new(&buffer[..size]) {
                                     let payload = rtp.payload();
+                                    debug_println!("UDP: Payload size: {}", payload.len());
                                     jitter_buffer.add_packet(payload.to_vec());
                                 }
                             }
@@ -156,6 +157,7 @@ fn main () {
             }
             // debug_println!("UDP: Looping for next receive");
             if let Some(packet) = jitter_buffer.get_next_packet() {
+                debug_println!("Jitter Buffer: Retrieved packet size: {}", packet.len());
                 match producer.lock() {
                     Ok(mut producer) => {
                         producer.push_slice(&packet);
@@ -164,7 +166,7 @@ fn main () {
                 }
 
             }
-            std::thread::sleep(Duration::from_millis(100));
+            std::thread::sleep(Duration::from_millis(5));
         }
     });
 

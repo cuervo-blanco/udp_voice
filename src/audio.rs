@@ -15,7 +15,7 @@ use ringbuf::storage::Heap;
 use std::thread;
 
 const SAMPLE_RATE: u32 = 48000;
-const CHANNELS: usize = 2;
+const CHANNELS: usize = 1;
 const FRAME_SIZE: usize = 960;
 
 pub type FormattedAudio = Result<Vec<u8>, opus::Error>;
@@ -240,7 +240,7 @@ pub fn stop_audio_stream(stream: cpal::Stream) {
 // ============================================
 // Convert audio stream from PCM format to Opus format
 pub fn convert_audio_stream_to_opus(input_stream: &[f32]) -> Result<Vec<u8>, opus::Error> {
-    let mut opus_encoder = Encoder::new(SAMPLE_RATE, Channels::Stereo, Application::Audio)?;
+    let mut opus_encoder = Encoder::new(SAMPLE_RATE, Channels::Mono, Application::Audio)?;
     let mut encoded_data = vec![0; 4000];
     let len = opus_encoder.encode_float(input_stream, &mut encoded_data)?;
     Ok(encoded_data[..len].to_vec())
@@ -251,10 +251,10 @@ pub fn convert_audio_stream_to_opus(input_stream: &[f32]) -> Result<Vec<u8>, opu
 // Decode an audio stream  from Oputs format to PCM format
 pub fn decode_opus_to_pcm(opus_data: &[u8]) -> Result<Vec<f32>, opus::Error> {
     let mut decoder = Decoder::new(SAMPLE_RATE, Channels::Mono)?;
-    let mut pcm_data = vec![0.0; opus_data.len() * 1];
+    let mut pcm_data = vec![0.0; FRAME_SIZE * CHANNELS];
     // FEC (Forward Error Correction) set to false
     let decoded_samples = decoder.decode_float(opus_data, &mut pcm_data, false)?;
-    pcm_data.truncate(decoded_samples * 1);
+    pcm_data.truncate(decoded_samples * CHANNELS);
     Ok(pcm_data)
 }
 

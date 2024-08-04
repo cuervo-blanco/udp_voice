@@ -7,7 +7,10 @@ use std::sync::{Mutex, Arc};
 use audio_sync::audio;
 use ringbuf::HeapRb;
 use ringbuf::traits::{Split, Producer};
+#[allow(unused_imports)]
 use std::time::Duration;
+use rtp_rs::*;
+use rand::Rng;
 
 #[allow(unused_attributes)]
 #[macro_use]
@@ -134,20 +137,18 @@ fn main () {
                         match udp_socket.recv(&mut buffer) {
                             Ok(size) => {
                                 debug_println!("UDP: Amount of bytes received {}", size);
-                                match bincode::deserialize::<Vec<u8>>(&buffer[..size]){
-                                    Ok(deserialized_data) => match producer_clone.lock() {
+                                if let Ok(rtp) = RtpReader::new(&buffer[..size]) {
+                                    let payload = rtp.payload();
+                                    match producer_clone.lock() {
                                         Ok(mut producer) => {
                                             debug_println!("Succesfully locked producer");
-                                            producer.push_slice(&deserialized_data);
+                                            producer.push_slice(payload);
                                         },
                                         Err(e) => {
                                             eprintln!("Failed to lock on to producer {}", e);
                                         }
-                                    }, Err(e) => {
-                                        eprintln!("Failed to deserialize data: {}", e);
-                                    }
+                                    }                                }
                                 }
-                            }
                             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                                 // debug_println!("UDP: recv would block");
                             }
@@ -168,9 +169,14 @@ fn main () {
     let send_socket_clone: Arc<Mutex<UdpSocket>> = Arc::clone(&send_socket);
     let user_table_clone = Arc::clone(&user_table);
 
+    let ssrc: u32 = rand::thread_rng().gen();
+
     thread::spawn(move || {
         debug_println!("Starting audio input thread");
         let mut input_stream = None;
+        let mut timestamp: u32 = 0;
+        let _sampling_rate: u32 = 48000;
+        let samples_per_packet: u32 = 960;
         loop {
             match rx.recv() {
                 Ok(command) => {
@@ -190,48 +196,57 @@ fn main () {
                                                 
                                                 thread::spawn(move || {
                                                     debug_println!("UDP: Receiving Thread Initialized");
+                                                    let mut sequence = 0;
                                                     loop {
                                                         match receiver.lock() {
                                                             Ok(receiver) => match receiver.recv() {
                                                                 Ok(opus_data) => {
                                                                     debug_println!("UDP: Preparing to send opus data");
-                                                                    let slice: &[u8] = &opus_data;
-                                                                    debug_println!("UDP: Initial Slice to send: {:?}", slice);
-                                                                    debug_println!("UDP: Locked into user table {:?}", user_table);
-                                                                    let encoded_audio: Vec<u8> = bincode::serialize(slice).unwrap();
-                                                                    debug_println!("UDP: Encoded Slice to send: {:?}", encoded_audio);
+                                                                    let packet = RtpPacketBuilder::new()
+                                                                        .payload_type(111)
+                                                                        .ssrc(ssrc)
+                                                                        .sequence(Seq::from(sequence))
+                                                                        .timestamp(timestamp) // Replace with actual timestamp
+                                                                        .padded(Pad::none())
+                                                                        .marked(false)
+                                                                        .payload(&opus_data)
+                                                                        .build();
+                                                                    sequence += 1;
+                                                                    timestamp += samples_per_packet;
 
-                                                                    let udp_socket = Arc::clone(&udp_socket);
-                                                                    let user_table = Arc::clone(&user_table);
+                                                                    if let Ok(packet) = packet {
+                                                                        let udp_socket = Arc::clone(&udp_socket);
+                                                                        let user_table = Arc::clone(&user_table);
+                                                                        thread::spawn(move || {
+                                                                            match udp_socket.lock() {
+                                                                                Ok(udp_socket) => {
+                                                                                    debug_println!("UDP: Succesfully locked into udp socket: {:?}", udp_socket);
+                                                                                    match user_table.lock() {
+                                                                                        Ok(user_table) => {
+                                                                                            for (user, ip) in user_table.iter() {
+                                                                                                let socket_addr = format!("{}:18522", ip);
+                                                                                                debug_println!("UDP: Connecting to {} on {}", user, socket_addr);
+                                                                                                let message = format!("Failed to connect to {}", user);
+                                                                                                if let Err(e) = udp_socket.connect(&socket_addr) {
+                                                                                                    eprintln!("{}: {}", message, e);
+                                                                                                } else {
+                                                                                                    debug_println!("UDP: Sending audio to {}", user);
+                                                                                                    if let Err(e) = udp_socket.send(&packet) {
+                                                                                                        eprintln!("Failed to send data to {}: {}", user, e);
+                                                                                                    }
 
-                                                                    thread::spawn(move || {
-                                                                    match udp_socket.lock() {
-                                                                        Ok(udp_socket) => {
-                                                                            debug_println!("UDP: Succesfully locked into udp socket: {:?}", udp_socket);
-                                                                            match user_table.lock() {
-                                                                                Ok(user_table) => {
-                                                                                    for (user, ip) in user_table.iter() {
-                                                                                        let socket_addr = format!("{}:18522", ip);
-                                                                                        debug_println!("UDP: Connecting to {} on {}", user, socket_addr);
-                                                                                        let message = format!("Failed to connect to {}", user);
-                                                                                        if let Err(e) = udp_socket.connect(&socket_addr) {
-                                                                                            eprintln!("{}: {}", message, e);
-                                                                                        } else {
-                                                                                            debug_println!("UDP: Sending audio to {}", user);
-                                                                                            if let Err(e) = udp_socket.send(&encoded_audio) {
-                                                                                                eprintln!("Failed to send data to {}: {}", user, e);
+                                                                                                }
                                                                                             }
 
-                                                                                        }
+                                                                                        },
+                                                                                        Err(e) => eprintln!("Failed to lock user_table: {}", e),
                                                                                     }
-
                                                                                 },
-                                                                                Err(e) => eprintln!("Failed to lock user_table: {}", e),
+                                                                                Err(e) => eprintln!("Failed to lock udp socket {}", e),
                                                                             }
-                                                                        },
-                                                                        Err(e) => eprintln!("Failed to lock udp socket {}", e),
+                                                                        });
                                                                     }
-                                                                    });
+
 
                                                                 },
                                                                 Err(e) => eprintln!("Failed to receive opus data: {}", e),

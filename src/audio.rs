@@ -14,9 +14,9 @@ use ringbuf::wrap::caching::Caching;
 use ringbuf::storage::Heap;
 use std::thread;
 
-const SAMPLE_RATE: u32 = 48000;
-const CHANNELS: usize = 1;
-const FRAME_SIZE: usize = 960;
+pub const SAMPLE_RATE: u32 = 48000;
+pub const CHANNELS: usize = 1;
+pub const FRAME_SIZE: usize = 960;
 
 pub type FormattedAudio = Result<Vec<u8>, opus::Error>;
 
@@ -241,7 +241,7 @@ pub fn stop_audio_stream(stream: cpal::Stream) {
 // Convert audio stream from PCM format to Opus format
 pub fn convert_audio_stream_to_opus(input_stream: &[f32]) -> Result<Vec<u8>, opus::Error> {
     let mut opus_encoder = Encoder::new(SAMPLE_RATE, Channels::Mono, Application::Audio)?;
-    let mut encoded_data = vec![0; 4000];
+    let mut encoded_data = vec![0; FRAME_SIZE * CHANNELS * 2];
     let len = opus_encoder.encode_float(input_stream, &mut encoded_data)?;
     Ok(encoded_data[..len].to_vec())
 }

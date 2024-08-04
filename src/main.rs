@@ -5,6 +5,7 @@ use std::sync::mpsc::channel;
 use std::net::UdpSocket;
 use std::sync::{Mutex, Arc};
 use audio_sync::audio;
+use audio_sync::jitter::*;
 use ringbuf::HeapRb;
 use ringbuf::traits::{Split, Producer};
 #[allow(unused_imports)]
@@ -120,8 +121,9 @@ fn main () {
 
     // Create Service
 
-    let producer_clone = Arc::clone(&producer);
+    let _producer_clone = Arc::clone(&producer);
     let receive_socket_clone: Arc<Mutex<UdpSocket>> = Arc::clone(&receive_socket);
+    let mut jitter_buffer = JitterBuffer::new();
 
     thread::spawn( move || {
         debug_println!("UDP: Starting UDP receiver");
@@ -139,16 +141,9 @@ fn main () {
                                 debug_println!("UDP: Amount of bytes received {}", size);
                                 if let Ok(rtp) = RtpReader::new(&buffer[..size]) {
                                     let payload = rtp.payload();
-                                    match producer_clone.lock() {
-                                        Ok(mut producer) => {
-                                            debug_println!("Succesfully locked producer");
-                                            producer.push_slice(payload);
-                                        },
-                                        Err(e) => {
-                                            eprintln!("Failed to lock on to producer {}", e);
-                                        }
-                                    }                                }
+                                    jitter_buffer.add_packet(payload.to_vec());
                                 }
+                            }
                             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                                 // debug_println!("UDP: recv would block");
                             }
@@ -160,6 +155,15 @@ fn main () {
                 Err(e) => eprintln!("Failed to lock UDP socket: {}", e)
             }
             // debug_println!("UDP: Looping for next receive");
+            if let Some(packet) = jitter_buffer.get_next_packet() {
+                match producer.lock() {
+                    Ok(mut producer) => {
+                        producer.push_slice(&packet);
+                    }
+                    Err(e) => eprintln!("Failed to lock producer: {}", e),
+                }
+
+            }
             std::thread::sleep(Duration::from_millis(100));
         }
     });
@@ -170,6 +174,7 @@ fn main () {
     let user_table_clone = Arc::clone(&user_table);
 
     let ssrc: u32 = rand::thread_rng().gen();
+
 
     thread::spawn(move || {
         debug_println!("Starting audio input thread");

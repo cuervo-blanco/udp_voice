@@ -41,6 +41,7 @@ impl JitterBuffer {
                 } else {
                     println!("Packet length ({}) is bigger than {}", packet.len(), FRAME_SIZE * CHANNELS * 2);
                     println!("Nothing to be done");
+                    return Some(packet);
 
                 }
             }

@@ -258,3 +258,18 @@ pub fn decode_opus_to_pcm(opus_data: &[u8]) -> Result<Vec<f32>, opus::Error> {
     Ok(pcm_data)
 }
 
+pub fn play_test_tone() -> Vec<u8> {
+    let frequency = 440.0;
+    let duration = 2.0; //seconds
+    let amplitude = 0.5;
+    let num_samples = (SAMPLE_RATE as f64 * duration) as usize;
+
+    let mut samples = Vec::with_capacity(num_samples);
+    for i in 0..num_samples {
+        let sample = (i as f64 * frequency * 2.0 * std::f64::consts::PI / SAMPLE_RATE as f64).sin() * amplitude;
+        samples.push(sample as f32);
+    }
+
+    bincode::serialize(&samples).unwrap()
+
+}

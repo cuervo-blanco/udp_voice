@@ -156,11 +156,13 @@ fn main () {
                 Err(e) => eprintln!("Failed to lock UDP socket: {}", e)
             }
             // debug_println!("UDP: Looping for next receive");
-            if let Some(packet) = jitter_buffer.get_next_packet() {
+            if let Some(_packet) = jitter_buffer.get_next_packet() {
                 debug_println!("Jitter Buffer: Retrieved packet size: {}", packet.len());
                 match producer.lock() {
                     Ok(mut producer) => {
-                        producer.push_slice(&packet);
+                        let test_tone = audio::play_test_tone();
+                        
+                        producer.push_slice(&test_tone);
                     }
                     Err(e) => eprintln!("Failed to lock producer: {}", e),
                 }

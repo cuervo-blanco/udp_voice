@@ -58,7 +58,7 @@ fn main () {
         let input = buffer.trim();
 
         if input == "send" {
-            let mut data: Vec<u8> = vec![0, 1, 2, 3, 4, 5, 6, 7, 8];
+            let mut data: Vec<u8> = vec![0, 1, 2, 3];
             let socket = UdpSocket::bind(&ip_port).expect("UDP: Failed to bind to socket");
             for (user, address) in user_table.lock().unwrap().clone() {
                 if address == ip.to_string() {
@@ -67,9 +67,14 @@ fn main () {
                     let port = format!("{}:18521", address);
                     // Calculate Time
                     let now = SystemTime::now();
-                    for i in 0..255 {
-                        data[0] = i;
-                        socket.send_to(&data, port.clone()).expect("UDP: Failed to send data");
+                    let mut counter = 0;
+                    while counter < 32 {
+                        for i in 0..255 {
+                            data[0] = i;
+                            socket.send_to(&data, port.clone()).expect("UDP: Failed to send data");
+                        }
+                        counter += 1;
+
                     }
                     match now.elapsed() {
                         Ok(elapsed) => {

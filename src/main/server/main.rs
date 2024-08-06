@@ -1,62 +1,46 @@
-use std::collections::HashMap;
-use std::sync::mpsc::channel;
-use std::io::Write;
 use selflib::mdns_service::MdnsService;
-use std::sync::{Arc, Mutex};
-use selflib::debug_println;
+use log::debug;
+use std::net::UdpSocket;
+use selflib::config::FRAME_SIZE;
 
-fn  clear_terminal() {
-    print!("\x1B[2J");
-    std::io::stdout().flush().unwrap();
-}
+fn main (){
+    env_logger::init();
 
-fn username_take()-> String {
-    // Take user input (instance name)
-    let reader = std::io::stdin();
-    let mut instance_name = String::new();
-    reader.read_line(&mut instance_name).unwrap();
-    let instance_name = instance_name.replace("\n", "").replace(" ", "_");
-    instance_name
-}
+    // System Information 
+    let ip =  local_ip_address::local_ip().unwrap(); debug!("UDP: Local IP Address: {}", ip);
+    let port: u16 = 18521;
+    let ip_port = format!("{}:{}", ip, port); debug!("UDP: IP Address & Port: {}", ip);
 
-fn main () {
-    println!("");
-    println!("Enter Username:");
-    // Add validation process? 
-    #[allow(unused_variables)]
-    let instance_name = Arc::new(Mutex::new(username_take()));
-    clear_terminal();
-
-
-    // -------- Input Thread ------- //
-    let (tx, _rx) = channel();
-    std::thread::spawn ( move || {
-        debug_println!("INPUT: Thread Initialized");
-        loop {
-            // Take user input
-            let reader = std::io::stdin();
-            let mut buffer: String = String::new();
-            reader.read_line(&mut buffer).unwrap();
-            let input = buffer.trim();
-
-            tx.send(input.to_string()).unwrap();
-        }
-    });
-
-    let ip =  local_ip_address::local_ip().unwrap();
-    debug_println!("UDP: Local IP Address: {}", ip);
-    let port: u16 = 18522;
-    #[allow(unused_variables)]
-    let ip_port = format!("{}:{}", ip, port);
-    debug_println!("UDP: IP Address & Port: {}", ip);
-
-    // Data Structures
-    let _user_table: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(std::collections::HashMap::new()));
 
     // mDNS
-    let properties = vec![("property_1", "attribute_1"), ("property_2", "attribute_2")];
-    let mdns = MdnsService::new("_udp_voice._udp.local.", properties);
+    let service_type = "udp_voice._udp.local.";
 
-    mdns.register_service(&instance_name.lock().unwrap(), ip, port);
+    let properties = vec![
+        ("service name", "udp voice"), 
+        ("service type", service_type), 
+        ("version", "0.0.0"),
+        ("interface", "server"),
+
+    ];
+
+    let mdns = MdnsService::new("_udp_voice._udp.local.", properties);
+    let _user_table = mdns.get_user_table();
+    mdns.register_service("udp_server", ip, port);
     mdns.browse_services();
+
+    // 1. Listen for udp messages in a port
+    let socket = UdpSocket::bind(ip_port).expect("UDP: Failed to bind socket");
+    let mut buffer = [0; FRAME_SIZE]; // Modify this to work with a FRAME_SIZE
+    loop { 
+        let (amount, source) = socket.recv_from(&mut buffer)
+                                     .expect("UDP: No Data Received");
+        let received = &mut buffer[..amount];
+
+        println!("FROM: {}, DATA: {:?}", source.to_string(), received);
+
+    }
+
+    
+    // Send this data to a port, have a different Application in Front End.
+
 }

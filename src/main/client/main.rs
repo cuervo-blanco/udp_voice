@@ -57,12 +57,16 @@ fn main () {
         let input = buffer.trim();
 
         if input == "send" {
-            let data = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+            let data = [0, 1, 2, 3, 4, 5, 6, 7];
             let socket = UdpSocket::bind(&ip_port).expect("UDP: Failed to bind to socket");
             for (user, address) in user_table.lock().unwrap().clone() {
-                let port = format!("{}:18521", address);
-                socket.send_to(&data, port).expect("UDP: Failed to send data");
-                println!("TO: {}, DATA: {:?}", user, data);
+                if address == ip.to_string() {
+                    continue;
+                } else {
+                    let port = format!("{}:18521", address);
+                    socket.send_to(&data, port).expect("UDP: Failed to send data");
+                    println!("TO: {}, DATA: {:?}", user, data);
+                }
             }
         } else {
             println!("Not a permitted command");

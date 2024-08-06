@@ -37,13 +37,14 @@ fn main (){
         let now = SystemTime::now();
         if let Ok((amount, source)) = socket.recv_from(&mut buffer){
             let received = &mut buffer[..amount];
-            match now.elapsed() {
-                Ok(elapsed) => {
-                    println!("FROM: {}, TOTAL TIME: {}, DATA: {:?}", source, elapsed.as_millis().to_string() + "ms", received);
-                }
-                Err(e) => {
-                    println!("FROM: {}, ERROR CALCULATING TIME: {}, DATA: {:?}", source, e, received);
-                }
+            println!("FROM: {}, DATA: {:?}", source, received);
+        }
+        match now.elapsed() {
+            Ok(elapsed) => {
+                println!("TOTAL TIME ELAPSED: {}", elapsed.as_secs());
+            }
+            Err(e) => {
+                println!("ERROR CALCULATING ELAPSED TIME: {}", e);
             }
         }
     }

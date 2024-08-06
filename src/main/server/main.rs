@@ -3,6 +3,7 @@ use log::debug;
 use std::net::UdpSocket;
 use selflib::config::FRAME_SIZE;
 use std::time::SystemTime;
+use chrono::{Local, DateTime};
 
 fn main (){
     env_logger::init();
@@ -34,21 +35,25 @@ fn main (){
     let mut buffer = [0; FRAME_SIZE]; // Modify this to work with a FRAME_SIZE
     let mut start_time: Option<SystemTime> = None;
     let mut end_time: Option<SystemTime> = None;
+    let mut received_time: Option<DateTime<Local>> = None;
 
     loop { 
         if let Ok((amount, source)) = socket.recv_from(&mut buffer){
             let received = &mut buffer[..amount];
             println!("FROM: {}, DATA: {:?}", source, received);
             let now = SystemTime::now();
+        
             if start_time.is_none() {
                 start_time = Some(now);
+                let now = Local::now();
+                received_time = Some(now);
             }
             end_time = Some(now);
         }
         if let (Some(start), Some(end)) = (start_time, end_time) {
             match end.duration_since(start) {
                 Ok(elapsed) => {
-                    println!("TOTAL TIME ELAPSED: {}", elapsed.as_millis());
+                    println!("FIRST FRAME RECEIVED: {}, TOTAL TIME ELAPSED: {}", received_time.unwrap(), elapsed.as_millis());
                 }
                 Err(e) => {
                     println!("ERROR CALCULATING ELAPSED TIME: {}", e);

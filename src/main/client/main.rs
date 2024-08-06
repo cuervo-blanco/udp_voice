@@ -5,6 +5,7 @@ use selflib::mdns_service::MdnsService;
 use std::sync::{Arc, Mutex};
 use std::net::UdpSocket;
 use log::debug;
+use chrono::Local;
 
 fn  clear_terminal() {
     print!("\x1B[2J");
@@ -67,6 +68,7 @@ fn main () {
                     let port = format!("{}:18521", address);
                     // Calculate Time
                     let now = SystemTime::now();
+                    let send_time = Local::now();
                     let mut counter = 1;
                     while counter < 33 {
                         for i in 0..255 {
@@ -79,6 +81,8 @@ fn main () {
                     match now.elapsed() {
                         Ok(elapsed) => {
                             println!("TO: {}, TOTAL TIME: {}, DATA: {:?}", user, elapsed.as_millis().to_string() + "ms", data);
+                            println!("FIRST MESSAGE: {}", send_time);
+
                         }
                         Err(e) => {
                             println!("TO {}, ERROR CALCULATING TIME: {}, DATA: {:?}", user, e, data);

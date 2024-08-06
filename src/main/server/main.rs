@@ -32,19 +32,27 @@ fn main (){
     // 1. Listen for udp messages in a port
     let socket = UdpSocket::bind(ip_port).expect("UDP: Failed to bind socket");
     let mut buffer = [0; FRAME_SIZE]; // Modify this to work with a FRAME_SIZE
+    let mut start_time: Option<SystemTime> = None;
+    let mut end_time: Option<SystemTime> = None;
 
     loop { 
-        let now = SystemTime::now();
         if let Ok((amount, source)) = socket.recv_from(&mut buffer){
             let received = &mut buffer[..amount];
             println!("FROM: {}, DATA: {:?}", source, received);
-        }
-        match now.elapsed() {
-            Ok(elapsed) => {
-                println!("TOTAL TIME ELAPSED: {}", elapsed.as_secs());
+            let now = SystemTime::now();
+            if start_time.is_none() {
+                start_time = Some(now);
             }
-            Err(e) => {
-                println!("ERROR CALCULATING ELAPSED TIME: {}", e);
+            end_time = Some(now);
+        }
+        if let (Some(start), Some(end)) = (start_time, end_time) {
+            match end.duration_since(start) {
+                Ok(elapsed) => {
+                    println!("TOTAL TIME ELAPSED: {}", elapsed.as_secs());
+                }
+                Err(e) => {
+                    println!("ERROR CALCULATING ELAPSED TIME: {}", e);
+                }
             }
         }
     }

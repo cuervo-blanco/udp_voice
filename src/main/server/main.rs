@@ -48,7 +48,7 @@ fn main (){
         if let (Some(start), Some(end)) = (start_time, end_time) {
             match end.duration_since(start) {
                 Ok(elapsed) => {
-                    println!("TOTAL TIME ELAPSED: {}", elapsed.as_secs());
+                    println!("TOTAL TIME ELAPSED: {}", elapsed.as_millis());
                 }
                 Err(e) => {
                     println!("ERROR CALCULATING ELAPSED TIME: {}", e);

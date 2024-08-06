@@ -67,8 +67,7 @@ fn main () {
                     let port = format!("{}:18521", address);
                     // Calculate Time
                     let now = SystemTime::now();
-                    #[allow(overflowing_literals)]
-                    for i in 0..8000 {
+                    for i in 0..255 {
                         data[0] = i;
                         socket.send_to(&data, port.clone()).expect("UDP: Failed to send data");
                     }

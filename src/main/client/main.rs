@@ -67,10 +67,10 @@ fn main () {
                     let port = format!("{}:18521", address);
                     // Calculate Time
                     let now = SystemTime::now();
-                    let mut counter = 0;
-                    while counter < 32 {
+                    let mut counter = 1;
+                    while counter < 33 {
                         for i in 0..255 {
-                            data[0] = i;
+                            data[0] = i * counter;
                             socket.send_to(&data, port.clone()).expect("UDP: Failed to send data");
                         }
                         counter += 1;

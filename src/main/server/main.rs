@@ -2,6 +2,7 @@ use selflib::mdns_service::MdnsService;
 use log::debug;
 use std::net::UdpSocket;
 use selflib::config::FRAME_SIZE;
+use std::time::SystemTime;
 
 fn main (){
     env_logger::init();
@@ -31,15 +32,21 @@ fn main (){
     // 1. Listen for udp messages in a port
     let socket = UdpSocket::bind(ip_port).expect("UDP: Failed to bind socket");
     let mut buffer = [0; FRAME_SIZE]; // Modify this to work with a FRAME_SIZE
+
     loop { 
-        let (amount, source) = socket.recv_from(&mut buffer)
-                                     .expect("UDP: No Data Received");
-        let received = &mut buffer[..amount];
-
-        println!("FROM: {}, DATA: {:?}", source.to_string(), received);
-
+        let now = SystemTime::now();
+        if let Ok((amount, source)) = socket.recv_from(&mut buffer){
+            let received = &mut buffer[..amount];
+            match now.elapsed() {
+                Ok(elapsed) => {
+                    println!("FROM: {}, TOTAL TIME: {}, DATA: {:?}", source, elapsed.as_millis().to_string() + "ms", received);
+                }
+                Err(e) => {
+                    println!("FROM: {}, ERROR CALCULATING TIME: {}, DATA: {:?}", source, e, received);
+                }
+            }
+        }
     }
-
     
     // Send this data to a port, have a different Application in Front End.
 

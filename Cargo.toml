@@ -1,6 +1,6 @@
 [package]
 name = "udp_voice"
-version = "0.2.1"
+version = "0.0.0"
 edition = "2021"
 
 [features]
@@ -19,6 +19,15 @@ opus = "0.3.0"
 ringbuf = "0.4.1"
 rtp-rs = "0.6.0"
 rand = "0.8.5"
+log = "0.4.22"
 
 [lib]
-name = "audio_sync"
+name = "selflib"
+
+[[bin]]
+name = "client"
+path = "src/main/client/main.rs"
+
+[[bin]]
+name = "server"
+path = "src/main/server/main.rs"

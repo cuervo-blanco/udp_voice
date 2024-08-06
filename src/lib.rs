@@ -1,2 +1,3 @@
 pub mod audio;
-pub mod jitter;
+pub mod mdns_service;
+pub mod debug;

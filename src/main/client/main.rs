@@ -70,7 +70,7 @@ fn main () {
                     let mut counter = 1;
                     while counter < 33 {
                         for i in 0..255 {
-                            data[0] = i * counter;
+                            data[0] = i;
                             socket.send_to(&data, port.clone()).expect("UDP: Failed to send data");
                         }
                         counter += 1;

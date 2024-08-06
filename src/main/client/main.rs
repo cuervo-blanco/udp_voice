@@ -1,3 +1,4 @@
+use std::time::SystemTime;
 use std::sync::mpsc::channel;
 use std::io::Write;
 use selflib::mdns_service::MdnsService;
@@ -64,11 +65,22 @@ fn main () {
                     continue;
                 } else {
                     let port = format!("{}:18521", address);
-                    for i in 0..8 {
+                    // Calculate Time
+                    let now = SystemTime::now();
+                    #[allow(overflowing_literals)]
+                    for i in 0..8000 {
                         data[0] = i;
                         socket.send_to(&data, port.clone()).expect("UDP: Failed to send data");
                     }
-                    println!("TO: {}, DATA: {:?}", user, data);
+                    match now.elapsed() {
+                        Ok(elapsed) => {
+                            println!("TO: {}, TOTAL TIME: {}, DATA: {:?}", user, elapsed.as_millis().to_string() + "ms", data);
+                        }
+                        Err(e) => {
+                            println!("TO {}, ERROR CALCULATING TIME: {}, DATA: {:?}", user, e, data);
+                        }
+                    }
+
                 }
             }
         } else {

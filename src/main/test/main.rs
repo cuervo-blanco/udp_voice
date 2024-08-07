@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 use selflib::config::{BUFFER_SIZE, FREQUENCY, SAMPLE_RATE, AMPLITUDE};
 use std::f32::consts::PI;
 use selflib::utils::clear_terminal;
@@ -15,10 +16,15 @@ fn main() {
         .expect("Failed to get audio output config");
 
     let (sender, receiver) = channel();
+    let pcm_data = Arc::new(Mutex::new(Vec::new()));
+    let data_index = Arc::new(Mutex::new(0));
 
-    let mut sample_clock = 0f32;
+
+    let pcm_data_clone = Arc::clone(&pcm_data);
+    let data_index_clone = Arc::clone(&data_index);
 
     thread::spawn(move || { 
+        let mut sample_clock = 0f32;
         loop {
             let sine_wave: Vec<f32> = (0..BUFFER_SIZE)
             .map(|_| {
@@ -33,12 +39,19 @@ fn main() {
         }
     });
 
-    let sine_wave = receiver.recv().unwrap();
+    thread::spawn(move || {
+        while let Ok(sine_wave) = receiver.recv() {
+            let mut buffer = pcm_data_clone.lock().unwrap();
+            *buffer = sine_wave;
+            let mut index = data_index_clone.lock().unwrap();
+            *index = 0;
+        }
+    });
 
-    match start_output_stream(&output_device, &output_config, sine_wave.clone()){
+
+    match start_output_stream(&output_device, &output_config, Arc::clone(&pcm_data), Arc::clone(&data_index)){
         Ok(_) => {
             println!("Playing audio...");
-            println!("Sound Received: {:?}", sine_wave);
             clear_terminal();
         },
         Err(e) => eprintln!("Error starting stream: {:?}", e),

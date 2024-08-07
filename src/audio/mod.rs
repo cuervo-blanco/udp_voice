@@ -164,18 +164,14 @@ pub fn start_input_stream(
 //        Start Output Stream
 // ============================================
 pub fn start_output_stream(output_device: &cpal::Device, config: &cpal::StreamConfig,
-    pcm_data: Vec<f32>) -> Result<cpal::Stream, cpal::BuildStreamError> {
+    pcm_data: Arc<Mutex<Vec<f32>>>, data_index: Arc<Mutex<usize>>) -> Result<cpal::Stream, cpal::BuildStreamError> {
     // Start the audio input/output stream
-    let pcm_data = Arc::new(Mutex::new(pcm_data));
-    let pcm_data_clone = Arc::clone(&pcm_data);
-    let data_index = Arc::new(Mutex::new(0));
-    let data_index_clone = Arc::clone(&data_index);
 
     let stream = output_device.build_output_stream(
         &config,
         move |output_data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            let buffer = pcm_data_clone.lock().unwrap();
-            let mut index = data_index_clone.lock().unwrap();
+            let buffer = pcm_data.lock().unwrap();
+            let mut index = data_index.lock().unwrap();
             for sample in output_data.iter_mut() {
                 if *index < buffer.len() {
                     *sample = buffer[*index];

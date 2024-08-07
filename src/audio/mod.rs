@@ -9,7 +9,7 @@ use opus::{Encoder, Decoder, Application};
 use opus::Channels;
 use std::sync::mpsc::{self, Sender, Receiver};
 use std::thread;
-use crate::config::{CHANNELS, SAMPLE_RATE, FRAME_SIZE, BUFFER_SIZE};
+use crate::config::{CHANNELS, SAMPLE_RATE, BUFFER_SIZE};
 
 pub type FormattedAudio = Result<Vec<u8>, opus::Error>;
 

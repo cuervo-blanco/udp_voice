@@ -8,15 +8,8 @@ use std::time::{Duration, Instant};
 use opus::{Encoder, Decoder, Application};
 use opus::Channels;
 use std::sync::mpsc::{self, Sender, Receiver};
-use ringbuf::SharedRb;
-use ringbuf::traits::{Observer, Consumer};
-use ringbuf::wrap::caching::Caching;
-use ringbuf::storage::Heap;
 use std::thread;
-
-pub const SAMPLE_RATE: u32 = 48000;
-pub const CHANNELS: usize = 1;
-pub const FRAME_SIZE: usize = 960;
+use crate::config::{CHANNELS, SAMPLE_RATE, FRAME_SIZE, BUFFER_SIZE};
 
 pub type FormattedAudio = Result<Vec<u8>, opus::Error>;
 
@@ -70,18 +63,18 @@ pub fn get_audio_config(device: &cpal::Device) -> Result<cpal::StreamConfig, cpa
 
             // Try to find a supported configuration
             let config =  cpal::StreamConfig {
-                channels: 2,
-                sample_rate: cpal::SampleRate(48000),
-                buffer_size: cpal::BufferSize::Fixed(512),
+                channels: CHANNELS as u16,
+                sample_rate: cpal::SampleRate(SAMPLE_RATE as u32),
+                buffer_size: cpal::BufferSize::Fixed(BUFFER_SIZE.try_into().unwrap()),
             };
             return Ok(config);
         }
     };
 
     let config =  cpal::StreamConfig {
-        channels: 2,
-        sample_rate: cpal::SampleRate(48000),
-        buffer_size: cpal::BufferSize::Fixed(512),
+        channels: CHANNELS as u16,
+        sample_rate: cpal::SampleRate(SAMPLE_RATE as u32),
+        buffer_size: cpal::BufferSize::Fixed(BUFFER_SIZE.try_into().unwrap()),
     };
 
     Ok(config)
@@ -123,8 +116,8 @@ pub fn start_input_stream(
                 buffer.extend_from_slice(data);
                 *last_received_clone.lock().expect("Failed to lock last_received") = Instant::now();
                 // Process the buffer if it has enough data for one frame
-                while buffer.len() >= FRAME_SIZE * CHANNELS {
-                    let frame: Vec<f32> = buffer.drain(0..FRAME_SIZE * CHANNELS).collect();
+                while buffer.len() >= BUFFER_SIZE * CHANNELS as usize {
+                    let frame: Vec<f32> = buffer.drain(0..BUFFER_SIZE * CHANNELS as usize).collect();
                     match convert_audio_stream_to_opus(&frame) {
                         Ok(opus_data) => {
                             if let Err(e) = sender.send(opus_data) {
@@ -171,55 +164,38 @@ pub fn start_input_stream(
 //        Start Output Stream
 // ============================================
 pub fn start_output_stream(output_device: &cpal::Device, config: &cpal::StreamConfig,
-    received_data: Arc<Mutex<Caching<Arc<SharedRb<Heap<u8>>>, false, true>>>) -> Result<cpal::Stream, cpal::BuildStreamError> {
+    pcm_data: Vec<f32>) -> Result<cpal::Stream, cpal::BuildStreamError> {
     // Start the audio input/output stream
-    
-    let output_buffer_clone = Arc::clone(&received_data);
-    println!("OUTPUT: Received data for playback");
+    let pcm_data = Arc::new(Mutex::new(pcm_data));
+    let pcm_data_clone = Arc::clone(&pcm_data);
+    let mut data_index = 0;
 
     let stream = output_device.build_output_stream(
         &config,
         move |output_data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            let mut buffer = output_buffer_clone.lock().unwrap();
-            
-            let mut temp_buffer = vec![0u8; FRAME_SIZE];
-            let mut pcm_data = Vec::new();
-            
-            while buffer.occupied_len() >= temp_buffer.len() {
-                buffer.pop_slice(&mut temp_buffer);
-                println!("OUTPUT: Popped slice from buffer and placed into temp_buffer");
-                match decode_opus_to_pcm(&temp_buffer) {
-                    Ok(decoded) => { 
-                        println!("OUTPUT: Successfull decoding to pcm: {:?}", decoded);
-                        pcm_data.extend(decoded);
-                    },
-                    Err(err) => {
-                        println!("AUDIO SYNC I: Opus decoding error: {}", err);
-                        break;
-                    }
-                }
-            }
-            for (i, sample) in output_data.iter_mut().enumerate() {
-                if i < pcm_data.len() {
-                    *sample = pcm_data[i];
+            let buffer = pcm_data_clone.lock().unwrap();
+            for sample in output_data.iter_mut() {
+                if data_index < buffer.len() {
+                    *sample = buffer[data_index];
+                    data_index += 1;
                 } else {
                     *sample = 0.0;
                 }
             }
         },
-        |err| println!("AUDIO SYNC I: An error occured on the output audio stream: {}", err),
+        |err| println!("An error occured on the output audio stream: {}", err),
         None
     );
 
     match stream {
         Ok(s) => {
             if let Err(err) = s.play() {
-                println!("AUDIO SYNC I: Failed to start output stream: {}", err);
+                println!("Failed to start output stream: {}", err);
             }
             Ok(s)
         }
         Err(e) => {
-            println!("AUDIO SYNC I: Failed to build output stream: {}", e);
+            println!("Failed to build output stream: {}", e);
             Err(e)
         }
     }
@@ -246,8 +222,13 @@ pub fn stop_audio_stream(stream: cpal::Stream) {
 // ============================================
 // Convert audio stream from PCM format to Opus format
 pub fn convert_audio_stream_to_opus(input_stream: &[f32]) -> Result<Vec<u8>, opus::Error> {
-    let mut opus_encoder = Encoder::new(SAMPLE_RATE, Channels::Mono, Application::Audio)?;
-    let mut encoded_data = vec![0; FRAME_SIZE * CHANNELS * 2];
+    let mut channels = Channels::Mono;
+    if CHANNELS == 2.0 {
+        channels = Channels::Stereo;
+    }
+
+    let mut opus_encoder = Encoder::new(SAMPLE_RATE as u32, channels, Application::Audio)?;
+    let mut encoded_data = vec![0; BUFFER_SIZE * CHANNELS as usize];
     let len = opus_encoder.encode_float(input_stream, &mut encoded_data)?;
     Ok(encoded_data[..len].to_vec())
 }
@@ -256,11 +237,11 @@ pub fn convert_audio_stream_to_opus(input_stream: &[f32]) -> Result<Vec<u8>, opu
 // ============================================
 // Decode an audio stream  from Oputs format to PCM format
 pub fn decode_opus_to_pcm(opus_data: &[u8]) -> Result<Vec<f32>, opus::Error> {
-    let mut decoder = Decoder::new(SAMPLE_RATE, Channels::Mono)?;
-    let mut pcm_data = vec![0.0; FRAME_SIZE * CHANNELS];
+    let mut decoder = Decoder::new(SAMPLE_RATE as u32, Channels::Mono)?;
+    let mut pcm_data = vec![0.0; FRAME_SIZE * CHANNELS as usize];
     // FEC (Forward Error Correction) set to false
     let decoded_samples = decoder.decode_float(opus_data, &mut pcm_data, false)?;
-    pcm_data.truncate(decoded_samples * CHANNELS);
+    pcm_data.truncate(decoded_samples * CHANNELS as usize);
     Ok(pcm_data)
 }
 

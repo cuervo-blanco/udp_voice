@@ -1,12 +1,19 @@
 use selflib::mdns_service::MdnsService;
 use log::debug;
 use std::net::UdpSocket;
-use selflib::config::FRAME_SIZE;
-use std::time::SystemTime;
-use chrono::{Local, DateTime};
+use selflib::config::BUFFER_SIZE;
+use selflib::audio::*;
 
 fn main (){
     env_logger::init();
+
+
+    let (Some(_input_device), Some(output_device)) = initialize_audio_interface() else {
+        return;
+    };
+
+    let output_config = get_audio_config(&output_device)
+        .expect("Failed to get audio output config");
 
     // System Information 
     let ip =  local_ip_address::local_ip().unwrap(); debug!("UDP: Local IP Address: {}", ip);
@@ -32,33 +39,17 @@ fn main (){
 
     // 1. Listen for udp messages in a port
     let socket = UdpSocket::bind(ip_port).expect("UDP: Failed to bind socket");
-    let mut buffer = [0; FRAME_SIZE]; // Modify this to work with a FRAME_SIZE
-    let mut start_time: Option<SystemTime> = None;
-    let mut end_time: Option<SystemTime> = None;
-    let mut received_time: Option<DateTime<Local>> = None;
+    let mut buffer = [0; BUFFER_SIZE]; // Modify this to work with a FRAME_SIZE
 
     loop { 
-        if let Ok((amount, source)) = socket.recv_from(&mut buffer){
+        if let Ok((amount, _source)) = socket.recv_from(&mut buffer){
             let received = &mut buffer[..amount];
-            println!("FROM: {}, DATA: {:?}", source, received);
-            let now = SystemTime::now();
-        
-            if start_time.is_none() {
-                start_time = Some(now);
-                let now = Local::now();
-                received_time = Some(now);
+            let audio = decode_opus_to_pcm(received).expect("Failed to decode Opus to PCM");
+            match start_output_stream(&output_device, &output_config, audio){
+                Ok(_) => println!("Playing audio..."),
+                Err(e) => eprintln!("Error starting stream: {:?}", e),
             }
-            end_time = Some(now);
-        }
-        if let (Some(start), Some(end)) = (start_time, end_time) {
-            match end.duration_since(start) {
-                Ok(elapsed) => {
-                    println!("FIRST FRAME RECEIVED: {}, TOTAL TIME ELAPSED: {}", received_time.unwrap(), elapsed.as_millis());
-                }
-                Err(e) => {
-                    println!("ERROR CALCULATING ELAPSED TIME: {}", e);
-                }
-            }
+
         }
     }
     

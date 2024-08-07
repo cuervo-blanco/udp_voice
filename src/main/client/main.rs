@@ -75,7 +75,7 @@ fn main () {
                     }).collect();
 
                 // Encode to Opus
-                let chunk = convert_audio_stream_to_opus(&period).unwrap();
+                let chunk = convert_audio_stream_to_opus(&period).expect("Failed to convert into Opus");
 
                 let socket = UdpSocket::bind(&ip_port).expect("UDP: Failed to bind to socket");
                 for (_user, address) in user_table.lock().unwrap().clone() {

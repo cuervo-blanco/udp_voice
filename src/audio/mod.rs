@@ -168,16 +168,18 @@ pub fn start_output_stream(output_device: &cpal::Device, config: &cpal::StreamCo
     // Start the audio input/output stream
     let pcm_data = Arc::new(Mutex::new(pcm_data));
     let pcm_data_clone = Arc::clone(&pcm_data);
-    let mut data_index = 0;
+    let data_index = Arc::new(Mutex::new(0));
+    let data_index_clone = Arc::clone(&data_index);
 
     let stream = output_device.build_output_stream(
         &config,
         move |output_data: &mut [f32], _: &cpal::OutputCallbackInfo| {
             let buffer = pcm_data_clone.lock().unwrap();
+            let mut index = data_index_clone.lock().unwrap();
             for sample in output_data.iter_mut() {
-                if data_index < buffer.len() {
-                    *sample = buffer[data_index];
-                    data_index += 1;
+                if *index < buffer.len() {
+                    *sample = buffer[*index];
+                    *index += 1;
                 } else {
                     *sample = 0.0;
                 }

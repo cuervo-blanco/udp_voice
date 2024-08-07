@@ -44,10 +44,13 @@ fn main (){
     loop { 
         if let Ok((amount, _source)) = socket.recv_from(&mut buffer){
             let received = &mut buffer[..amount];
-            let audio = decode_opus_to_pcm(received).expect("Failed to decode Opus to PCM");
-            match start_output_stream(&output_device, &output_config, audio){
-                Ok(_) => println!("Playing audio..."),
-                Err(e) => eprintln!("Error starting stream: {:?}", e),
+            if let Ok(audio) = decode_opus_to_pcm(received) {
+                match start_output_stream(&output_device, &output_config, audio){
+                    Ok(_) => println!("Playing audio..."),
+                    Err(e) => eprintln!("Error starting stream: {:?}", e),
+                }
+            } else {
+                eprintln!("Failed to decode Opus to PCM");
             }
 
         }

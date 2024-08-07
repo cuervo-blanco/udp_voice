@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 use selflib::config::{BUFFER_SIZE, FREQUENCY, SAMPLE_RATE, AMPLITUDE};
 use std::f32::consts::PI;
-use selflib::utils::clear_terminal;
 use selflib::audio::*;
 use std::thread;
 use std::sync::mpsc::channel;
@@ -51,7 +50,6 @@ fn main() {
     match start_output_stream(&output_device, &output_config, Arc::clone(&pcm_data), Arc::clone(&data_index)){
         Ok(_) => {
             println!("Playing audio...");
-            clear_terminal();
         },
         Err(e) => eprintln!("Error starting stream: {:?}", e),
     }

@@ -180,6 +180,9 @@ pub fn start_output_stream(output_device: &cpal::Device, config: &cpal::StreamCo
                     *sample = 0.0;
                 }
             }
+            if *index >= buffer.len() {
+                *index = 0;
+            }
         },
         |err| println!("An error occured on the output audio stream: {}", err),
         None

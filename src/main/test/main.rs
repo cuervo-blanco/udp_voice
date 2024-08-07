@@ -1,53 +1,29 @@
-use std::sync::{Arc, Mutex};
-use selflib::config::{BUFFER_SIZE, FREQUENCY, SAMPLE_RATE, AMPLITUDE};
-use std::f32::consts::PI;
 use selflib::audio::*;
-use std::thread;
 use std::sync::mpsc::channel;
 
 fn main() {
 
-    let (Some(_input_device), Some(output_device)) = initialize_audio_interface() else {
+    let (Some(input_device), Some(output_device)) = initialize_audio_interface() else {
         return;
     };
 
     let output_config = get_audio_config(&output_device)
         .expect("Failed to get audio output config");
+    let input_config = get_audio_config(&input_device)
+        .expect("Failed to get audio output config");
 
     let (sender, receiver) = channel();
-    let pcm_data = Arc::new(Mutex::new(Vec::new()));
-    let data_index = Arc::new(Mutex::new(0));
 
-
-    let pcm_data_clone = Arc::clone(&pcm_data);
-    let data_index_clone = Arc::clone(&data_index);
-
-    thread::spawn(move || { 
-        let mut sample_clock = 0f32;
-        loop {
-            let sine_wave: Vec<f32> = (0..BUFFER_SIZE)
-            .map(|_| {
-                let value = (sample_clock * FREQUENCY * 2.0 * PI / SAMPLE_RATE).sin() * AMPLITUDE;
-                sample_clock = (sample_clock + 1.0) % SAMPLE_RATE;
-                value
-            }).collect();
-
-            
-            sender.send(sine_wave).unwrap();
+    match start_input_stream(&input_device, &input_config, sender) {
+        Ok(_) => {
+            println!("Input stream started successfully.");
         }
-    });
-
-    thread::spawn(move || {
-        while let Ok(sine_wave) = receiver.recv() {
-            let mut buffer = pcm_data_clone.lock().unwrap();
-            *buffer = sine_wave;
-            let mut index = data_index_clone.lock().unwrap();
-            *index = 0;
+        Err(e) => {
+            eprintln!("Failed to start input stream: {:?}", e);
         }
-    });
+    }
 
-
-    match start_output_stream(&output_device, &output_config, Arc::clone(&pcm_data), Arc::clone(&data_index)){
+    match start_output_stream(&output_device, &output_config, receiver){
         Ok(_) => {
             println!("Playing audio...");
         },

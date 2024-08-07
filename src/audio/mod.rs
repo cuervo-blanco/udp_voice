@@ -4,10 +4,8 @@
 use cpal::platform::Host;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 use opus::{Encoder, Decoder, Application};
 use opus::Channels;
-use std::sync::mpsc::{self, Sender, Receiver};
 use std::thread;
 use crate::config::{CHANNELS, SAMPLE_RATE, BUFFER_SIZE};
 
@@ -94,119 +92,59 @@ pub fn list_supported_configs(device: &cpal::Device) {
 // ============================================
 pub fn start_input_stream(
     input_device: &cpal::Device, 
-    config: &cpal::StreamConfig
-    ) -> Result<(cpal::Stream, Receiver<Vec<u8>>), cpal::BuildStreamError> {
-    // Start the audio input/output stream
-
-    let (sender, receiver): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = mpsc::channel();
-
-    let audio_buffer = Arc::new(Mutex::new(Vec::new()));
-
-    let buffer_clone = Arc::clone(&audio_buffer);
-    let timeout: Duration = Duration::from_secs(5);
-
-    let last_received = Arc::new(Mutex::new(Instant::now()));
-    let last_received_clone = Arc::clone(&last_received);
+    config: &cpal::StreamConfig,
+    sender: std::sync::mpsc::Sender<Vec<f32>>
+    ) -> Result<cpal::Stream, cpal::BuildStreamError> {
 
     let stream = input_device.build_input_stream(
-            &config,
-            move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                let mut buffer = buffer_clone.lock()
-                    .expect("AUDIO SYNC I: Failed to lock buffer"); 
-                buffer.extend_from_slice(data);
-                *last_received_clone.lock().expect("Failed to lock last_received") = Instant::now();
-                // Process the buffer if it has enough data for one frame
-                while buffer.len() >= BUFFER_SIZE * CHANNELS as usize {
-                    let frame: Vec<f32> = buffer.drain(0..BUFFER_SIZE * CHANNELS as usize).collect();
-                    match convert_audio_stream_to_opus(&frame) {
-                        Ok(opus_data) => {
-                            if let Err(e) = sender.send(opus_data) {
-                                eprintln!("AUDIO SYNC I: Failed to send Opus data: {}", e);
-                            }
-                        }
-                        Err(e) => println!("AUDIO SYNC I: Failed to encode Opus data: {}", e)
-                    }
-                }
-            },
-            |err| println!("AUDIO SYNC I: An error occured on the input audio stream: {}", err),
-                Some(timeout)
-                );
-
-    thread::spawn(move || {
-        loop {
-            {
-                let last_received = last_received.lock().expect("Failed to lock last_received");
-                if last_received.elapsed() < Duration::from_secs(1) {
-                    println!("AUDIO SYNC I: Receiving audio input...");
-                } else {
-                    println!("AUDIO SYNC I: No audio input received in the last second.");
-                }
-            }
-            thread::sleep(Duration::from_secs(1));
-        }
-    });
-
-    match stream {
-        Ok(s) => {
-            if let Err(err) = s.play() {
-                println!("AUDIO SYNC I: Failed to start input stream: {}", err);
-            }
-            Ok((s, receiver))
-        }
-        Err(e) => {
-            println!("AUDIO SYNC I: Failed to build input stream: {}", e);
-            Err(e)
-        }
-    }
+        config,
+        move |data: &[f32], _: &cpal::InputCallbackInfo| {
+            sender.send(data.to_vec()).unwrap();
+        },
+        |err| {
+            eprintln!("An error occurred on the input audio stream: {}", err);
+        },
+        None
+    )?;
+    stream.play().expect("Failed to play input stream");
+    Ok(stream)
 
 }
 // ============================================
 //        Start Output Stream
 // ============================================
 pub fn start_output_stream(output_device: &cpal::Device, config: &cpal::StreamConfig,
-    pcm_data: Arc<Mutex<Vec<f32>>>, data_index: Arc<Mutex<usize>>) -> Result<cpal::Stream, cpal::BuildStreamError> {
+    receiver: std::sync::mpsc::Receiver<Vec<f32>>) -> Result<cpal::Stream, cpal::BuildStreamError> {
     println!("DEBUG: Starting to build output stream...");
+    
+    let pcm_data = Arc::new(Mutex::new(Vec::new()));
+    let pcm_data_clone = Arc::clone(&pcm_data);
 
     let stream = output_device.build_output_stream(
         &config,
         move |output_data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            println!("DEBUG: Output stream callback triggered...");
-            let buffer = pcm_data.lock().expect("Failed to lock pcm_data");
-            let mut index = data_index.lock().expect("Failed to lock data_index");
-            println!("DEBUG: Current buffer length: {}", buffer.len());
-            println!("DEBUG: Current data index: {}", *index);
-            for sample in output_data.iter_mut() {
-                if *index < buffer.len() {
-                    *sample = buffer[*index];
-                    *index += 1;
-                } else {
-                    *sample = 0.0;
-                }
-            }
-            if *index >= buffer.len() {
-                *index = 0;
-                println!("DEBUG: Data index reset to 0");
+            let mut buffer = pcm_data_clone.lock().unwrap();
+            if buffer.len() >= output_data.len() {
+                output_data.copy_from_slice(&buffer[..output_data.len()]);
+                buffer.drain(..output_data.len());
+            } else {
+                output_data.fill(0.0);
             }
         },
         |err| println!("An error occurred on the output audio stream: {}", err),
         None
-    );
+    )?;
 
-    match stream {
-        Ok(s) => {
-            println!("DEBUG: Output stream built successfully.");
-            if let Err(err) = s.play() {
-                println!("Failed to start output stream: {}", err);
-            } else {
-                println!("DEBUG: Output stream started successfully.");
-            }
-            Ok(s)
+    stream.play().expect("Failed to play stream");
+
+    thread::spawn(move || {
+        while let Ok(data) = receiver.recv() {
+            let mut buffer = pcm_data.lock().unwrap();
+            buffer.extend(data);
         }
-        Err(e) => {
-            println!("Failed to build output stream: {}", e);
-            Err(e)
-        }
-    }
+    });
+
+    Ok(stream)
 }
 // ============================================
 //        Stop Audio Stream

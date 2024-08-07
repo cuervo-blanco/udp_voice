@@ -33,7 +33,9 @@ fn main() {
     let buffer_duration: u64 = (1000 / SAMPLE_RATE as u64) * BUFFER_SIZE as u64;
 
     std::thread::spawn( move || {
+        println!("THREAD 1: Entering thread");
         let mut chunk = chunk_buffer_clone.lock().expect("Failed to get chunk");
+        println!("THREAD 1: Accessing chunk");
         let mut clock = 0.0;
         loop {
             let block: Vec<f32> = (0..BUFFER_SIZE)
@@ -45,6 +47,7 @@ fn main() {
             .collect();
             
             chunk.push_back(block);
+            println!("THREAD 1: Pushing into chunk");
             // Make delay to not overwhelm the memory
             std::thread::sleep(std::time::Duration::from_millis(buffer_duration));
             }
@@ -55,7 +58,9 @@ fn main() {
    
     let chunk_buffer_clone = Arc::clone(&chunk_buffer);
     std::thread::spawn( move || {
+        println!("THREAD 2: Entering thread");
         let mut chunk = chunk_buffer_clone.lock().expect("Failed to get chunk");
+        println!("THREAD 2: Accessing chunk");
         loop {
             let buffer = chunk.pop_front();
             for block in buffer.iter() {
@@ -63,6 +68,7 @@ fn main() {
                     producer.try_push(*frame).expect("Failed to push into producer");
                 }
             }
+            println!("THREAD 2: Finished pushing into producer");
             std::thread::sleep(std::time::Duration::from_millis(buffer_duration));
         }
     });

@@ -33,3 +33,7 @@ path = "src/main/client/main.rs"
 [[bin]]
 name = "server"
 path = "src/main/server/main.rs"
+
+[[bin]]
+name = "test"
+path = "src/main/test/main.rs"

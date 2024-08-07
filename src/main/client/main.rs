@@ -1,6 +1,6 @@
 use std::sync::mpsc::channel;
 use selflib::mdns_service::MdnsService;
-use selflib::config::{SAMPLE_RATE, BUFFER_SIZE};
+use selflib::config::{SAMPLE_RATE, BUFFER_SIZE, AMPLITUDE, FREQUENCY};
 use selflib::audio::convert_audio_stream_to_opus;
 use std::sync::{Arc, Mutex};
 use std::net::UdpSocket;
@@ -8,8 +8,6 @@ use log::debug;
 use std::f32::consts::PI;
 use selflib::utils::{clear_terminal, username_take};
 
-const FREQUENCY: f32 = 440.0;
-const AMPLITUDE: f32 = 0.5;
 
 fn main () {
     env_logger::init();
@@ -52,17 +50,17 @@ fn main () {
 
         if input == "send" {
             loop {
-                let period: Vec<f32> = (0..BUFFER_SIZE)
+                let sine_wave: Vec<f32> = (0..BUFFER_SIZE)
                     .map(|_| {
                         let value = (sample_clock * FREQUENCY * 2.0 * PI / SAMPLE_RATE).sin() * AMPLITUDE;
                         sample_clock = (sample_clock + 1.0) % SAMPLE_RATE;
                         value
                     }).collect();
 
-                println!("Sine Wave being generated: {:?}", period);
+                println!("Sine Wave being generated: {:?}", sine_wave);
 
                 // Encode to Opus
-                let chunk = convert_audio_stream_to_opus(&period).expect("Failed to convert into Opus");
+                let chunk = convert_audio_stream_to_opus(&sine_wave).expect("Failed to convert into Opus");
 
                 println!("Conversion to Opus: {:?}", chunk);
 

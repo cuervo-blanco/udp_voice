@@ -165,13 +165,16 @@ pub fn start_input_stream(
 // ============================================
 pub fn start_output_stream(output_device: &cpal::Device, config: &cpal::StreamConfig,
     pcm_data: Arc<Mutex<Vec<f32>>>, data_index: Arc<Mutex<usize>>) -> Result<cpal::Stream, cpal::BuildStreamError> {
-    // Start the audio input/output stream
+    println!("DEBUG: Starting to build output stream...");
 
     let stream = output_device.build_output_stream(
         &config,
         move |output_data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            let buffer = pcm_data.lock().unwrap();
-            let mut index = data_index.lock().unwrap();
+            println!("DEBUG: Output stream callback triggered...");
+            let buffer = pcm_data.lock().expect("Failed to lock pcm_data");
+            let mut index = data_index.lock().expect("Failed to lock data_index");
+            println!("DEBUG: Current buffer length: {}", buffer.len());
+            println!("DEBUG: Current data index: {}", *index);
             for sample in output_data.iter_mut() {
                 if *index < buffer.len() {
                     *sample = buffer[*index];
@@ -182,17 +185,20 @@ pub fn start_output_stream(output_device: &cpal::Device, config: &cpal::StreamCo
             }
             if *index >= buffer.len() {
                 *index = 0;
+                println!("DEBUG: Data index reset to 0");
             }
         },
-        |err| println!("An error occured on the output audio stream: {}", err),
+        |err| println!("An error occurred on the output audio stream: {}", err),
         None
     );
 
-
     match stream {
         Ok(s) => {
+            println!("DEBUG: Output stream built successfully.");
             if let Err(err) = s.play() {
                 println!("Failed to start output stream: {}", err);
+            } else {
+                println!("DEBUG: Output stream started successfully.");
             }
             Ok(s)
         }

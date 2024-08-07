@@ -26,15 +26,17 @@ fn main() {
         .expect("error whole querying configs");
     let supported_config = supported_configs_range.next()
         .expect("no supported config?!")
-        .with_sample_rate(cpal::SampleRate(SAMPLE_RATE as u32));
+        .with_max_sample_rate();
 
     let chunk_buffer: Arc<Mutex<LinkedList<Vec<f32>>>> = Arc::new(Mutex::new(LinkedList::new()));
     let chunk_buffer_clone = Arc::clone(&chunk_buffer);
+    let buffer_duration: u64 = (1000 / SAMPLE_RATE as u64) * BUFFER_SIZE as u64;
+
     std::thread::spawn( move || {
         let mut chunk = chunk_buffer_clone.lock().expect("Failed to get chunk");
         let mut clock = 0.0;
         loop {
-            let period: Vec<f32> = (0..BUFFER_SIZE)
+            let block: Vec<f32> = (0..BUFFER_SIZE)
                 .map(|_| {
                     let sample = (clock * 2.0  * PI * FREQUENCY / SAMPLE_RATE).sin();
                     clock = (clock + 1.0) % SAMPLE_RATE;
@@ -42,8 +44,9 @@ fn main() {
                 })
             .collect();
             
-            chunk.push_back(period);
+            chunk.push_back(block);
             // Make delay to not overwhelm the memory
+            std::thread::sleep(std::time::Duration::from_millis(buffer_duration));
             }
     });
 
@@ -51,16 +54,18 @@ fn main() {
     let config = supported_config.into();
    
     let chunk_buffer_clone = Arc::clone(&chunk_buffer);
-    {
+    std::thread::spawn( move || {
         let mut chunk = chunk_buffer_clone.lock().expect("Failed to get chunk");
-        let buffer = chunk.pop_front();
-        for block in buffer.iter() {
-            for frame in block.iter() {
-                producer.try_push(*frame).expect("Failed to push into producer");
+        loop {
+            let buffer = chunk.pop_front();
+            for block in buffer.iter() {
+                for frame in block.iter() {
+                    producer.try_push(*frame).expect("Failed to push into producer");
+                }
             }
+            std::thread::sleep(std::time::Duration::from_millis(buffer_duration));
         }
-
-    }
+    });
 
     let stream = match sample_format {
         SampleFormat::F32 => device.build_output_stream(

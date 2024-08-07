@@ -238,7 +238,7 @@ pub fn convert_audio_stream_to_opus(input_stream: &[f32]) -> Result<Vec<u8>, opu
 // Decode an audio stream  from Oputs format to PCM format
 pub fn decode_opus_to_pcm(opus_data: &[u8]) -> Result<Vec<f32>, opus::Error> {
     let mut decoder = Decoder::new(SAMPLE_RATE as u32, Channels::Mono)?;
-    let mut pcm_data = vec![0.0; FRAME_SIZE * CHANNELS as usize];
+    let mut pcm_data = vec![0.0; BUFFER_SIZE * CHANNELS as usize];
     // FEC (Forward Error Correction) set to false
     let decoded_samples = decoder.decode_float(opus_data, &mut pcm_data, false)?;
     pcm_data.truncate(decoded_samples * CHANNELS as usize);

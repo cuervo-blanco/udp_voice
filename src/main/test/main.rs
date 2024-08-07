@@ -33,7 +33,6 @@ fn main() {
                 value
             }).collect();
 
-            println!("Sine Wave being generated: {:?}", sine_wave);
             
             sender.send(sine_wave).unwrap();
         }

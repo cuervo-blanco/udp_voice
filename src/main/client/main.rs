@@ -1,5 +1,4 @@
 use std::sync::mpsc::channel;
-use std::io::Write;
 use selflib::mdns_service::MdnsService;
 use selflib::config::{SAMPLE_RATE, BUFFER_SIZE};
 use selflib::audio::convert_audio_stream_to_opus;
@@ -7,21 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::net::UdpSocket;
 use log::debug;
 use std::f32::consts::PI;
-
-
-fn  clear_terminal() {
-    print!("\x1B[2J");
-    std::io::stdout().flush().unwrap();
-}
-
-fn username_take()-> String {
-    // Take user input (instance name)
-    let reader = std::io::stdin();
-    let mut instance_name = String::new();
-    reader.read_line(&mut instance_name).unwrap();
-    let instance_name = instance_name.replace("\n", "").replace(" ", "_");
-    instance_name
-}
+use selflib::utils::{clear_terminal, username_take};
 
 const FREQUENCY: f32 = 440.0;
 const AMPLITUDE: f32 = 0.5;
@@ -74,19 +59,25 @@ fn main () {
                         value
                     }).collect();
 
+                println!("Sine Wave being generated: {:?}", period);
+
                 // Encode to Opus
                 let chunk = convert_audio_stream_to_opus(&period).expect("Failed to convert into Opus");
 
+                println!("Conversion to Opus: {:?}", chunk);
+
                 let socket = UdpSocket::bind(&ip_port).expect("UDP: Failed to bind to socket");
-                for (_user, address) in user_table.lock().unwrap().clone() {
+                for (user, address) in user_table.lock().unwrap().clone() {
                     if address == ip.to_string() {
                         continue;
                     } else {
                         let port = format!("{}:18521", address);
                         // Calculate Time
                         socket.send_to(&chunk, port.clone()).expect("UDP: Failed to send data");
+                        println!("Sent chunk to {}: {:?}", user, chunk);
                     }
                 }
+                clear_terminal();
             }
         } else {
             println!("Not a permitted command");

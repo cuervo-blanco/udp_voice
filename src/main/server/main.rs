@@ -3,6 +3,7 @@ use log::debug;
 use std::net::UdpSocket;
 use selflib::config::BUFFER_SIZE;
 use selflib::audio::*;
+use selflib::utils::clear_terminal;
 
 fn main (){
     env_logger::init();
@@ -43,10 +44,14 @@ fn main (){
 
     loop { 
         if let Ok((amount, _source)) = socket.recv_from(&mut buffer){
+            clear_terminal();
             let received = &mut buffer[..amount];
             if let Ok(audio) = decode_opus_to_pcm(received) {
-                match start_output_stream(&output_device, &output_config, audio){
-                    Ok(_) => println!("Playing audio..."),
+                match start_output_stream(&output_device, &output_config, audio.clone()){
+                    Ok(_) => {
+                        println!("Playing audio...");
+                        println!("Sound Received: {:?}", audio.clone());
+                    },
                     Err(e) => eprintln!("Error starting stream: {:?}", e),
                 }
             } else {

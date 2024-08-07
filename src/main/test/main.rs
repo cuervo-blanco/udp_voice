@@ -1,38 +1,100 @@
-use selflib::audio::*;
-use std::sync::mpsc::channel;
+use cpal::SampleFormat;
+use std::sync::{Arc, Mutex};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use selflib::config::*;
+use std::f32::consts::PI;
+use std::collections::LinkedList;
+use ringbuf::{
+    traits::{Consumer, Producer, Split}, 
+    HeapRb,
+};
 
+// As Chunks are generated they are Stored in a Linked List FIFO
+// This is then processed by the CPAL Output Stream one at a time, 
 fn main() {
+    // Create ring buffer to cycle through frames in the generated blocks
+    let ring = HeapRb::<f32>::new(BUFFER_SIZE);
+    let (mut producer, mut consumer) = ring.split();
 
-    let (Some(input_device), Some(output_device)) = initialize_audio_interface() else {
-        return;
-    };
-
-    let output_config = get_audio_config(&output_device)
-        .expect("Failed to get audio output config");
-    let input_config = get_audio_config(&input_device)
-        .expect("Failed to get audio output config");
-
-    let (sender, receiver) = channel();
-
-    match start_input_stream(&input_device, &input_config, sender) {
-        Ok(_) => {
-            println!("Input stream started successfully.");
-        }
-        Err(e) => {
-            eprintln!("Failed to start input stream: {:?}", e);
-        }
+    for _ in 0..BUFFER_SIZE {
+        producer.try_push(0.0).unwrap();
     }
 
-    match start_output_stream(&output_device, &output_config, receiver){
-        Ok(_) => {
-            println!("Playing audio...");
+    let host = cpal::default_host();
+    let device = host.default_output_device().expect("no output device available");
+    let mut supported_configs_range =  device.supported_output_configs()
+        .expect("error whole querying configs");
+    let supported_config = supported_configs_range.next()
+        .expect("no supported config?!")
+        .with_sample_rate(cpal::SampleRate(SAMPLE_RATE as u32));
+
+    let chunk_buffer: Arc<Mutex<LinkedList<Vec<f32>>>> = Arc::new(Mutex::new(LinkedList::new()));
+    let chunk_buffer_clone = Arc::clone(&chunk_buffer);
+    std::thread::spawn( move || {
+        let mut chunk = chunk_buffer_clone.lock().expect("Failed to get chunk");
+        let mut clock = 0.0;
+        loop {
+            let period: Vec<f32> = (0..BUFFER_SIZE)
+                .map(|_| {
+                    let sample = (clock * 2.0  * PI * FREQUENCY / SAMPLE_RATE).sin();
+                    clock = (clock + 1.0) % SAMPLE_RATE;
+                    sample
+                })
+            .collect();
+            
+            chunk.push_back(period);
+            // Make delay to not overwhelm the memory
+            }
+    });
+
+    let sample_format = supported_config.sample_format();
+    let config = supported_config.into();
+   
+    let chunk_buffer_clone = Arc::clone(&chunk_buffer);
+    {
+        let mut chunk = chunk_buffer_clone.lock().expect("Failed to get chunk");
+        let buffer = chunk.pop_front();
+        for block in buffer.iter() {
+            for frame in block.iter() {
+                producer.try_push(*frame).expect("Failed to push into producer");
+            }
+        }
+
+    }
+
+    let stream = match sample_format {
+        SampleFormat::F32 => device.build_output_stream(
+            &config,
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                for sample in data {
+                    *sample = match consumer.try_pop() {
+                        Some(s) => s,
+                        None => {
+                            0.0
+                        }
+                    }
+                }
+            },
+            move |_err| {
+                // react to errors here.
+            },
+            None //None=blocking, Some(Duration)=timeout
+        ),
+        SampleFormat::I16 => {
+            println!("Not yet implemented(I16)");
+            todo!();
         },
-        Err(e) => eprintln!("Error starting stream: {:?}", e),
-    }
-
+        SampleFormat::U16 => {
+            println!("Not yet implemented (U16)");
+            todo!();
+        }
+        sample_format => panic!("Unsupported sample format '{sample_format}'")
+    }.unwrap();
+    
+    stream.play().expect("Failed to play stream");
 
     loop {
-        // Prevent the main thread from exiting
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        std::thread::sleep(std::time::Duration::from_millis(2000));
     }
+
 }

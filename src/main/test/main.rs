@@ -7,11 +7,7 @@ use ringbuf::{
     HeapRb,
 };
 
-// As Chunks are generated they are Stored in a Linked List FIFO
-// This is then processed by the CPAL Output Stream one at a time, 
 fn main() {
-    // Create ring buffer to cycle through frames in the generated blocks
-
     let host = cpal::default_host();
     let device = host.default_output_device().expect("no output device available");
     
@@ -19,36 +15,32 @@ fn main() {
     let config = device.default_output_config().unwrap();
     let sample_format = config.sample_format();
     let sample_rate = config.sample_rate().0;
+    let channels = config.channels();
 
-    let ring = HeapRb::<f32>::new(BUFFER_SIZE);
+    let ring = HeapRb::<f32>::new(BUFFER_SIZE * channels as usize);
     let (mut producer, mut consumer) = ring.split();
 
-    let buffer_duration: u64 = (1000 / sample_rate as u64) * BUFFER_SIZE as u64;
+    let _buffer_duration: u64 = (1000 / sample_rate as u64) * BUFFER_SIZE as u64;
 
-    std::thread::spawn( move || {
-        let mut clock = 0.0;
+    let _producer_thread = std::thread::spawn( move || {
+        let mut phase = 0.0;
         loop {
             let block: Vec<f32> = (0..BUFFER_SIZE)
                 .map(|_| {
-                    let sample = (clock * 2.0  * PI * FREQUENCY / sample_rate as f32).sin();
-                    clock = (clock + 1.0) % sample_rate as f32;
+                    let sample = (phase * 2.0  * PI * FREQUENCY / sample_rate as f32).sin();
+                    phase = (phase + 1.0) % sample_rate as f32;
                     sample
                 })
             .collect();
 
-            for frame in block.iter() {
+            for sample in block {
                 while producer.is_full() {
                      std::thread::sleep(std::time::Duration::from_millis(1));
                 }
-                producer.try_push(*frame).expect("Failed to push into producer");
+                producer.try_push(sample).expect("Failed to push into producer");
             }
-            
-            // Make delay to not overwhelm the memory
-            std::thread::sleep(std::time::Duration::from_millis(buffer_duration));
         }
     });
-
-   
 
     std::thread::sleep(std::time::Duration::from_millis(1000));
     let config = config.into();
@@ -57,16 +49,10 @@ fn main() {
         SampleFormat::F32 => device.build_output_stream(
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                println!("Playing Audio...");
                 for sample in data {
-                    *sample = match consumer.try_pop() {
-                        Some(s) => s,
-                        None => {
-                            0.0
-                        }
+                    *sample = consumer.try_pop().unwrap_or(0.0);
                     }
-                }
-            },
+                },
             move |err| {
                 // react to errors here.
                 eprintln!("Failed to output samples into stream: {}", err);

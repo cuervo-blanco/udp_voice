@@ -1,5 +1,5 @@
 use cpal::SampleFormat;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Condvar};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use selflib::config::*;
 use std::f32::consts::PI;
@@ -28,14 +28,14 @@ fn main() {
         .expect("no supported config?!")
         .with_max_sample_rate();
 
-    let chunk_buffer: Arc<Mutex<LinkedList<Vec<f32>>>> = Arc::new(Mutex::new(LinkedList::new()));
+    let chunk_buffer =  Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
     let chunk_buffer_clone = Arc::clone(&chunk_buffer);
     let buffer_duration: u64 = (1000 / SAMPLE_RATE as u64) * BUFFER_SIZE as u64;
 
     std::thread::spawn( move || {
-        println!("1: Entering thread");
-        let mut clock = 0.0;
         loop {
+            println!("1: Entering thread");
+            let mut clock = 0.0;
             let block: Vec<f32> = (0..BUFFER_SIZE)
                 .map(|_| {
                     let sample = (clock * 2.0  * PI * FREQUENCY / SAMPLE_RATE).sin();
@@ -45,16 +45,14 @@ fn main() {
             .collect();
             println!("1: Sine wave block created");
             
-            {
-                println!("1: Accessing chunk");
-                let mut chunk = chunk_buffer_clone.lock().expect("Failed to get chunk");
-                println!("1: Pushing into chunk: {:?}", block);
-                chunk.push_back(block);
-            }
+            let (lock, cvar) = &*chunk_buffer_clone;
+            let mut chunk = lock.lock().expect("Failed to get chunk");
+            chunk.push_back(block);
+            cvar.notify_one();
 
             // Make delay to not overwhelm the memory
             std::thread::sleep(std::time::Duration::from_millis(buffer_duration));
-            }
+        }
     });
 
     let sample_format = supported_config.sample_format();
@@ -62,18 +60,20 @@ fn main() {
    
     let chunk_buffer_clone = Arc::clone(&chunk_buffer);
     std::thread::spawn( move || {
+        // Sleep to ensure enough data is generated
+        std::thread::sleep(std::time::Duration::from_millis(1000));
         println!("2: Entering thread");
+        let (lock, cvar) = &*chunk_buffer_clone;
         loop {
-            let buffer = {
-                println!("2: Accessing chunk");
-                let mut chunk = chunk_buffer_clone.lock().expect("Failed to get chunk");
-                chunk.pop_front()
-            };
-            println!("2: Buffer accessed: {:?}", buffer);
+            println!("2: Accessing chunk");
+            let mut chunk = lock.lock().expect("Failed to get chunk");
+            while chunk.is_empty() {
+                chunk = cvar.wait(chunk).unwrap()
+            }
             println!("2: Iterating through buffer");
-            if let Some(block) = buffer {
+            if let Some(block) = chunk.pop_front() {
                 for frame in block.iter() {
-                    println!("2: Frame to push into producder: {:?}", frame);
+                    println!("2: Frame to push into producer: {:?}", frame);
                     producer.try_push(*frame).expect("Failed to push into producer");
                 }
             }
@@ -81,6 +81,8 @@ fn main() {
             std::thread::sleep(std::time::Duration::from_millis(buffer_duration));
         }
     });
+
+    println!("0: Chunk buffer created: {:?}", chunk_buffer);
 
     let stream = match sample_format {
         SampleFormat::F32 => device.build_output_stream(

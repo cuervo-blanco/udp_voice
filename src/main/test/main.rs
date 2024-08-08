@@ -1,9 +1,7 @@
 use cpal::SampleFormat;
-use std::sync::{Arc, Mutex, Condvar};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use selflib::config::*;
 use std::f32::consts::PI;
-use std::collections::LinkedList;
 use ringbuf::{
     traits::{Consumer, Producer, Split, Observer}, 
     HeapRb,
@@ -25,8 +23,6 @@ fn main() {
     let ring = HeapRb::<f32>::new(BUFFER_SIZE);
     let (mut producer, mut consumer) = ring.split();
 
-    let chunk_buffer =  Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
-    let chunk_buffer_clone = Arc::clone(&chunk_buffer);
     let buffer_duration: u64 = (1000 / sample_rate as u64) * BUFFER_SIZE as u64;
 
     std::thread::spawn( move || {
@@ -39,46 +35,20 @@ fn main() {
                     sample
                 })
             .collect();
-            
-            {
-                let (lock, cvar) = &*chunk_buffer_clone;
-                let mut chunk = lock.lock().expect("Failed to get chunk");
-                chunk.push_back(block);
-                cvar.notify_one();
-                println!("1: Finished pushing into chunk buffer");
-            }
 
+            for frame in block.iter() {
+                while producer.is_full() {
+                     std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                producer.try_push(*frame).expect("Failed to push into producer");
+            }
+            
             // Make delay to not overwhelm the memory
             std::thread::sleep(std::time::Duration::from_millis(buffer_duration));
         }
     });
 
    
-    let chunk_buffer_clone = Arc::clone(&chunk_buffer);
-    std::thread::spawn( move || {
-        // Sleep to ensure enough data is generated
-        let (lock, cvar) = &*chunk_buffer_clone;
-        loop {
-            let buffer = {
-                let mut chunk = lock.lock().expect("Failed to get chunk");
-                while chunk.is_empty() {
-                    chunk = cvar.wait(chunk).unwrap()
-                }
-                chunk.pop_front()
-            };
-            println!("2: Iterating through buffer");
-            if let Some(block) = buffer {
-                for frame in block.iter() {
-                    while producer.is_full() {
-                         std::thread::sleep(std::time::Duration::from_millis(1));
-                    }
-                    producer.try_push(*frame).expect("Failed to push into producer");
-                }
-            }
-            println!("2: Finished pushing into producer");
-            std::thread::sleep(std::time::Duration::from_millis(buffer_duration));
-        }
-    });
 
     std::thread::sleep(std::time::Duration::from_millis(1000));
     let config = config.into();

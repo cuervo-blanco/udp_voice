@@ -5,7 +5,7 @@ use selflib::config::*;
 use std::f32::consts::PI;
 use std::collections::LinkedList;
 use ringbuf::{
-    traits::{Consumer, Producer, Split}, 
+    traits::{Consumer, Producer, Split, Observer}, 
     HeapRb,
 };
 
@@ -55,8 +55,6 @@ fn main() {
         }
     });
 
-    let sample_format = supported_config.sample_format();
-    let config = supported_config.into();
    
     let chunk_buffer_clone = Arc::clone(&chunk_buffer);
     std::thread::spawn( move || {
@@ -74,6 +72,9 @@ fn main() {
             println!("2: Iterating through buffer");
             if let Some(block) = buffer {
                 for frame in block.iter() {
+                    while producer.is_full() {
+                         std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
                     producer.try_push(*frame).expect("Failed to push into producer");
                 }
             }
@@ -82,8 +83,11 @@ fn main() {
         }
     });
 
-    std::thread::sleep(std::time::Duration::from_millis(buffer_duration));
+    std::thread::sleep(std::time::Duration::from_millis(1000));
     println!("0: Chunk buffer created: {:?}", chunk_buffer);
+
+    let sample_format = supported_config.sample_format();
+    let config = supported_config.into();
 
     let stream = match sample_format {
         SampleFormat::F32 => device.build_output_stream(

@@ -27,13 +27,14 @@ fn main() {
         let phase_increment = 2.0 * PI * FREQUENCY / sample_rate as f32;
         loop {
             let block: Vec<f32> = (0..BUFFER_SIZE)
-                .map(|_| {
+                .flat_map(|_| {
                     let sample = (phase).sin();
                     phase += phase_increment;
                     if phase > 2.0 * PI {
                         phase -= 2.0 * PI;
                     }
-                    sample
+                    std::iter::repeat(sample).take(channels as usize)
+                    
                 })
             .collect();
 

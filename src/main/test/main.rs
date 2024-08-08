@@ -16,29 +16,28 @@ fn main() {
     let ring = HeapRb::<f32>::new(BUFFER_SIZE);
     let (mut producer, mut consumer) = ring.split();
 
-    for _ in 0..BUFFER_SIZE {
-        producer.try_push(0.0).unwrap();
-    }
-
     let host = cpal::default_host();
     let device = host.default_output_device().expect("no output device available");
     let mut supported_configs_range =  device.supported_output_configs()
         .expect("error whole querying configs");
     let supported_config = supported_configs_range.next()
         .expect("no supported config?!")
-        .with_max_sample_rate();
+        .with_sample_rate(cpal::SampleRate(SAMPLE_RATE as u32));
 
     let chunk_buffer =  Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
     let chunk_buffer_clone = Arc::clone(&chunk_buffer);
     let buffer_duration: u64 = (1000 / SAMPLE_RATE as u64) * BUFFER_SIZE as u64;
 
     std::thread::spawn( move || {
+        let mut clock = 0.0;
         loop {
-            let mut clock = 0.0;
             let block: Vec<f32> = (0..BUFFER_SIZE)
                 .map(|_| {
                     let sample = (clock * 2.0  * PI * FREQUENCY / SAMPLE_RATE).sin();
-                    clock = (clock + 1.0) % SAMPLE_RATE;
+                    clock += 1.0;
+                    if clock >= SAMPLE_RATE {
+                        clock -= SAMPLE_RATE;
+                    }
                     sample
                 })
             .collect();
@@ -59,7 +58,6 @@ fn main() {
     let chunk_buffer_clone = Arc::clone(&chunk_buffer);
     std::thread::spawn( move || {
         // Sleep to ensure enough data is generated
-        std::thread::sleep(std::time::Duration::from_millis(1000));
         let (lock, cvar) = &*chunk_buffer_clone;
         loop {
             let buffer = {
@@ -84,8 +82,6 @@ fn main() {
     });
 
     std::thread::sleep(std::time::Duration::from_millis(1000));
-    println!("0: Chunk buffer created: {:?}", chunk_buffer);
-
     let sample_format = supported_config.sample_format();
     let config = supported_config.into();
 

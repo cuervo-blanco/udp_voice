@@ -13,30 +13,33 @@ use ringbuf::{
 // This is then processed by the CPAL Output Stream one at a time, 
 fn main() {
     // Create ring buffer to cycle through frames in the generated blocks
-    let ring = HeapRb::<f32>::new(BUFFER_SIZE);
-    let (mut producer, mut consumer) = ring.split();
 
     let host = cpal::default_host();
     let device = host.default_output_device().expect("no output device available");
-    let mut supported_configs_range =  device.supported_output_configs()
-        .expect("error whole querying configs");
-    let supported_config = supported_configs_range.next()
-        .expect("no supported config?!")
-        .with_sample_rate(cpal::SampleRate(SAMPLE_RATE as u32));
+    
+    // Default audio config
+    let config = device.default_output_config().unwrap();
+    let sample_format = config.sample_format();
+    let sample_rate = config.sample_rate().0;
+    let channels = config.channels() as usize;
+    let buffer_size = BUFFER_SIZE * channels;
+
+    let ring = HeapRb::<f32>::new(buffer_size);
+    let (mut producer, mut consumer) = ring.split();
 
     let chunk_buffer =  Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
     let chunk_buffer_clone = Arc::clone(&chunk_buffer);
-    let buffer_duration: u64 = (1000 / SAMPLE_RATE as u64) * BUFFER_SIZE as u64;
+    let buffer_duration: u64 = (1000 / sample_rate as u64) * buffer_size as u64;
 
     std::thread::spawn( move || {
         let mut clock = 0.0;
         loop {
-            let block: Vec<f32> = (0..BUFFER_SIZE)
+            let block: Vec<f32> = (0..buffer_size)
                 .map(|_| {
-                    let sample = (clock * 2.0  * PI * FREQUENCY / SAMPLE_RATE).sin();
+                    let sample = (clock * 2.0  * PI * FREQUENCY / sample_rate as f32).sin();
                     clock += 1.0;
-                    if clock >= SAMPLE_RATE {
-                        clock -= SAMPLE_RATE;
+                    if clock >= sample_rate as f32 {
+                        clock -= sample_rate as f32;
                     }
                     sample
                 })
@@ -82,8 +85,7 @@ fn main() {
     });
 
     std::thread::sleep(std::time::Duration::from_millis(1000));
-    let sample_format = supported_config.sample_format();
-    let config = supported_config.into();
+    let config = config.into();
 
     let stream = match sample_format {
         SampleFormat::F32 => device.build_output_stream(

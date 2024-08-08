@@ -42,7 +42,6 @@ fn main() {
                     sample
                 })
             .collect();
-            println!("1: Sine wave block created");
             
             {
                 let (lock, cvar) = &*chunk_buffer_clone;
@@ -83,6 +82,7 @@ fn main() {
         }
     });
 
+    std::thread::sleep(std::time::Duration::from_millis(buffer_duration));
     println!("0: Chunk buffer created: {:?}", chunk_buffer);
 
     let stream = match sample_format {

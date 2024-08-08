@@ -45,6 +45,7 @@ fn main() {
                 let mut chunk = lock.lock().expect("Failed to get chunk");
                 chunk.push_back(block);
                 cvar.notify_one();
+                println!("1: Finished pushing into chunk buffer");
             }
 
             // Make delay to not overwhelm the memory
@@ -86,6 +87,7 @@ fn main() {
         SampleFormat::F32 => device.build_output_stream(
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                println!("Playing Audio...");
                 for sample in data {
                     *sample = match consumer.try_pop() {
                         Some(s) => s,
@@ -95,8 +97,9 @@ fn main() {
                     }
                 }
             },
-            move |_err| {
+            move |err| {
                 // react to errors here.
+                eprintln!("Failed to output samples into stream: {}", err);
             },
             None //None=blocking, Some(Duration)=timeout
         ),

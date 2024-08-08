@@ -33,7 +33,7 @@ fn main() {
     let buffer_duration: u64 = (1000 / SAMPLE_RATE as u64) * BUFFER_SIZE as u64;
 
     std::thread::spawn( move || {
-        println!("THREAD 1: Entering thread");
+        println!("1: Entering thread");
         let mut clock = 0.0;
         loop {
             let block: Vec<f32> = (0..BUFFER_SIZE)
@@ -43,13 +43,13 @@ fn main() {
                     sample
                 })
             .collect();
-            println!("THREAD 1: Sine wave block created");
+            println!("1: Sine wave block created");
             
             {
+                println!("1: Accessing chunk");
                 let mut chunk = chunk_buffer_clone.lock().expect("Failed to get chunk");
-                println!("THREAD 1: Accessing chunk");
+                println!("1: Pushing into chunk: {:?}", block);
                 chunk.push_back(block);
-                println!("THREAD 1: Pushing into chunk");
             }
 
             // Make delay to not overwhelm the memory
@@ -62,19 +62,22 @@ fn main() {
    
     let chunk_buffer_clone = Arc::clone(&chunk_buffer);
     std::thread::spawn( move || {
-        println!("THREAD 2: Entering thread");
+        println!("2: Entering thread");
         loop {
             let buffer = {
-                println!("THREAD 2: Accessing chunk");
+                println!("2: Accessing chunk");
                 let mut chunk = chunk_buffer_clone.lock().expect("Failed to get chunk");
                 chunk.pop_front()
             };
+            println!("2: Buffer accessed: {:?}", buffer);
+            println!("2: Iterating through buffer");
             if let Some(block) = buffer {
                 for frame in block.iter() {
+                    println!("2: Frame to push into producder: {:?}", frame);
                     producer.try_push(*frame).expect("Failed to push into producer");
                 }
             }
-            println!("THREAD 2: Finished pushing into producer");
+            println!("2: Finished pushing into producer");
             std::thread::sleep(std::time::Duration::from_millis(buffer_duration));
         }
     });

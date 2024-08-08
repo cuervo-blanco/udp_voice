@@ -23,12 +23,16 @@ fn main() {
     let _buffer_duration: u64 = (1000 / sample_rate as u64) * BUFFER_SIZE as u64;
 
     let _producer_thread = std::thread::spawn( move || {
-        let mut phase = 0.0;
+        let mut phase = 0.0 as f32;
+        let phase_increment = 2.0 * PI * FREQUENCY / sample_rate as f32;
         loop {
             let block: Vec<f32> = (0..BUFFER_SIZE)
                 .map(|_| {
-                    let sample = (phase * 2.0  * PI * FREQUENCY / sample_rate as f32).sin();
-                    phase = (phase + 1.0) % sample_rate as f32;
+                    let sample = (phase).sin();
+                    phase += phase_increment;
+                    if phase > 2.0 * PI {
+                        phase -= 2.0 * PI;
+                    }
                     sample
                 })
             .collect();

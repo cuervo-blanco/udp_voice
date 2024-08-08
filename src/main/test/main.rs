@@ -29,12 +29,12 @@ fn main() {
 
     let chunk_buffer =  Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
     let chunk_buffer_clone = Arc::clone(&chunk_buffer);
-    let buffer_duration: u64 = (1000 / sample_rate as u64) * buffer_size as u64;
+    let buffer_duration: u64 = (1000 / sample_rate as u64) * BUFFER_SIZE as u64;
 
     std::thread::spawn( move || {
         let mut clock = 0.0;
         loop {
-            let block: Vec<f32> = (0..buffer_size)
+            let block: Vec<f32> = (0..BUFFER_SIZE)
                 .map(|_| {
                     let sample = (clock * 2.0  * PI * FREQUENCY / sample_rate as f32).sin();
                     clock += 1.0;

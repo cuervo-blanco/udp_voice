@@ -34,7 +34,6 @@ fn main() {
 
     std::thread::spawn( move || {
         loop {
-            println!("1: Entering thread");
             let mut clock = 0.0;
             let block: Vec<f32> = (0..BUFFER_SIZE)
                 .map(|_| {
@@ -45,10 +44,12 @@ fn main() {
             .collect();
             println!("1: Sine wave block created");
             
-            let (lock, cvar) = &*chunk_buffer_clone;
-            let mut chunk = lock.lock().expect("Failed to get chunk");
-            chunk.push_back(block);
-            cvar.notify_one();
+            {
+                let (lock, cvar) = &*chunk_buffer_clone;
+                let mut chunk = lock.lock().expect("Failed to get chunk");
+                chunk.push_back(block);
+                cvar.notify_one();
+            }
 
             // Make delay to not overwhelm the memory
             std::thread::sleep(std::time::Duration::from_millis(buffer_duration));
@@ -62,18 +63,18 @@ fn main() {
     std::thread::spawn( move || {
         // Sleep to ensure enough data is generated
         std::thread::sleep(std::time::Duration::from_millis(1000));
-        println!("2: Entering thread");
         let (lock, cvar) = &*chunk_buffer_clone;
         loop {
-            println!("2: Accessing chunk");
-            let mut chunk = lock.lock().expect("Failed to get chunk");
-            while chunk.is_empty() {
-                chunk = cvar.wait(chunk).unwrap()
-            }
+            let buffer = {
+                let mut chunk = lock.lock().expect("Failed to get chunk");
+                while chunk.is_empty() {
+                    chunk = cvar.wait(chunk).unwrap()
+                }
+                chunk.pop_front()
+            };
             println!("2: Iterating through buffer");
-            if let Some(block) = chunk.pop_front() {
+            if let Some(block) = buffer {
                 for frame in block.iter() {
-                    println!("2: Frame to push into producer: {:?}", frame);
                     producer.try_push(*frame).expect("Failed to push into producer");
                 }
             }

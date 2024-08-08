@@ -21,10 +21,8 @@ fn main() {
     let config = device.default_output_config().unwrap();
     let sample_format = config.sample_format();
     let sample_rate = config.sample_rate().0;
-    let channels = config.channels() as usize;
-    let buffer_size = BUFFER_SIZE * channels;
 
-    let ring = HeapRb::<f32>::new(buffer_size);
+    let ring = HeapRb::<f32>::new(BUFFER_SIZE);
     let (mut producer, mut consumer) = ring.split();
 
     let chunk_buffer =  Arc::new((Mutex::new(LinkedList::new()), Condvar::new()));
@@ -37,10 +35,7 @@ fn main() {
             let block: Vec<f32> = (0..BUFFER_SIZE)
                 .map(|_| {
                     let sample = (clock * 2.0  * PI * FREQUENCY / sample_rate as f32).sin();
-                    clock += 1.0;
-                    if clock >= sample_rate as f32 {
-                        clock -= sample_rate as f32;
-                    }
+                    clock = (clock + 1.0) % sample_rate as f32;
                     sample
                 })
             .collect();

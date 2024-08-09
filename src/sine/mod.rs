@@ -1,13 +1,13 @@
 use std::sync::mpsc::{Sender, Receiver};
 use cpal::SampleFormat;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 use std::f32::consts::PI;
 use ringbuf::{
     traits::{Consumer, Producer, Split, Observer}, 
     HeapRb,
 };
 
-struct Sine {
+pub struct Sine {
     frequency: f32,
     amplitude: f32,
     sample_rate: u32,
@@ -16,7 +16,7 @@ struct Sine {
 }
 impl Sine {
 
-    pub fn new(
+    pub fn new (
         frequency: f32, 
         amplitude: f32, 
         sample_rate: u32,
@@ -31,8 +31,8 @@ impl Sine {
             sample_rate,
             channels
         };
-        std::thread::spawn( move || {
 
+        std::thread::spawn( move || {
             let mut phase = 0.0 as f32;
             let phase_increment = 2.0 * PI * sine.frequency / sine.sample_rate as f32;
             loop {
@@ -47,15 +47,11 @@ impl Sine {
 
                     })
                 .collect();
-
                 if sender.send(block).is_err(){
                     break;
-
                 }
-
             }
         });
-
         sine
     }
 
@@ -64,10 +60,10 @@ impl Sine {
         self, 
         receiver: Receiver<Vec<f32>>,
         buffer_size: usize,
+        device: cpal::Device,
         config: cpal::SupportedStreamConfig,
         ) { 
-        let host = cpal::default_host();
-        let device = host.default_output_device().expect("no output device available");
+
         std::thread::sleep(std::time::Duration::from_millis(1000));
 
         let ring = HeapRb::<f32>::new(buffer_size * self.channels);

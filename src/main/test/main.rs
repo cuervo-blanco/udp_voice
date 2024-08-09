@@ -5,15 +5,9 @@ use std::sync::mpsc::channel;
 
 fn main () {
 
-    let host = cpal::default_host();
-    let device = host.default_output_device().expect("no output device available");
-    let config = device.default_output_config().unwrap();
-    let sample_rate = config.sample_rate();
-    let channels = config.channels();
-
     let (sender, receiver) = channel();
-    let sine = Sine::new(220.0, 1.0, sample_rate.0, channels as usize, sender, BUFFER_SIZE );
-    sine.play(receiver, BUFFER_SIZE, device, config);
+    let sine = Sine::new(220.0, 1.0, SAMPLE_RATE.0, CHANNELS as usize, sender, BUFFER_SIZE );
+    sine.play(receiver, BUFFER_SIZE, DEVICE, CONFIG);
 
     std::thread::sleep(std::time::Duration::from_millis(3000));
 

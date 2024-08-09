@@ -11,7 +11,6 @@ pub struct Sine {
     frequency: f32,
     amplitude: f32,
     sample_rate: u32,
-    #[allow(dead_code)]
     channels: usize,
 }
 impl Sine {
@@ -64,8 +63,6 @@ impl Sine {
         config: cpal::SupportedStreamConfig,
         ) { 
 
-        std::thread::sleep(std::time::Duration::from_millis(1000));
-
         let ring = HeapRb::<f32>::new(buffer_size * self.channels);
         let (mut producer, mut consumer) = ring.split();
 
@@ -82,7 +79,6 @@ impl Sine {
 
 
         let sample_format = config.sample_format();
-        let _channels = config.channels();
         let config: cpal::StreamConfig = config.into();
 
         let stream = match sample_format {

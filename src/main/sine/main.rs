@@ -1,6 +1,6 @@
 use cpal::SampleFormat;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use selflib::config::*;
+use selflib::settings::BUFFER_SIZE;
 use std::env;
 use std::f32::consts::PI;
 use ringbuf::{
@@ -8,11 +8,16 @@ use ringbuf::{
     HeapRb,
 };
 
-fn main() {
+const AMPLITUDE: f32 = 0.5;
 
+pub fn main() {
+
+    // Command Line Arguments
     let args: Vec<String> = env::args().collect();
     let frequency = &args[1];
     let frequency: f32 = frequency.parse().unwrap();
+    let duration = &args[2];
+    let duration: u64 = duration.parse().unwrap();
 
     let host = cpal::default_host();
     let device = host.default_output_device().expect("no output device available");
@@ -34,7 +39,7 @@ fn main() {
         loop {
             let block: Vec<f32> = (0..BUFFER_SIZE)
                 .flat_map(|_| {
-                    let sample = (phase).sin();
+                    let sample = (phase).sin() * AMPLITUDE;
                     phase += phase_increment;
                     if phase > 2.0 * PI {
                         phase -= 2.0 * PI;
@@ -86,8 +91,6 @@ fn main() {
     
     stream.play().expect("Failed to play stream");
 
-    loop {
-        std::thread::sleep(std::time::Duration::from_millis(2000));
-    }
+    std::thread::sleep(std::time::Duration::from_millis(duration));
 
 }

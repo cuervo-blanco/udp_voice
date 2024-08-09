@@ -1,6 +1,6 @@
 use cpal::SampleFormat;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use selflib::settings::BUFFER_SIZE;
+use selflib::settings::Settings;
 use std::env;
 use std::f32::consts::PI;
 use ringbuf::{
@@ -8,16 +8,19 @@ use ringbuf::{
     HeapRb,
 };
 
-const AMPLITUDE: f32 = 0.5;
 
 pub fn main() {
 
+    let settings = Settings::get_default_settings();
+    let buffer_size = settings.get_buffer_size();
+    let amplitude = settings.get_amplitude();
     // Command Line Arguments
     let args: Vec<String> = env::args().collect();
     let frequency = &args[1];
     let frequency: f32 = frequency.parse().unwrap();
     let duration = &args[2];
     let duration: u64 = duration.parse().unwrap();
+
 
     let host = cpal::default_host();
     let device = host.default_output_device().expect("no output device available");
@@ -28,18 +31,20 @@ pub fn main() {
     let sample_rate = config.sample_rate().0;
     let channels = config.channels();
 
-    let ring = HeapRb::<f32>::new(BUFFER_SIZE * channels as usize);
+    let ring = HeapRb::<f32>::new(buffer_size * channels as usize);
     let (mut producer, mut consumer) = ring.split();
 
-    let _buffer_duration: u64 = (1000 / sample_rate as u64) * BUFFER_SIZE as u64;
+    let _buffer_duration: u64 = (1000 / sample_rate as u64) * buffer_size as u64;
 
     let _producer_thread = std::thread::spawn( move || {
         let mut phase = 0.0 as f32;
         let phase_increment = 2.0 * PI * frequency / sample_rate as f32;
+        // Sine Equation:
+        // sine = sin(phase * 2.0 * PI * Frecuencia / Sample Rate)
         loop {
-            let block: Vec<f32> = (0..BUFFER_SIZE)
+            let block: Vec<f32> = (0..buffer_size)
                 .flat_map(|_| {
-                    let sample = (phase).sin() * AMPLITUDE;
+                    let sample = (phase).sin() * amplitude;
                     phase += phase_increment;
                     if phase > 2.0 * PI {
                         phase -= 2.0 * PI;

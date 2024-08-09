@@ -54,7 +54,6 @@ impl Sine {
         sine
     }
 
-    #[allow(dead_code)]
     pub fn play(
         self, 
         receiver: Receiver<Vec<f32>>,

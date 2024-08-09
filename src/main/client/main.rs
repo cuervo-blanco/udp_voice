@@ -1,23 +1,29 @@
-use std::sync::mpsc::channel;
 use selflib::mdns_service::MdnsService;
-use selflib::config::{SAMPLE_RATE, BUFFER_SIZE, AMPLITUDE, FREQUENCY};
-use selflib::audio::convert_audio_stream_to_opus;
+use selflib::settings::Settings;
+use std::sync::mpsc::channel;
+use selflib::sound::encode_opus;
+use selflib::sine::Sine;
 use std::sync::{Arc, Mutex};
 use std::net::UdpSocket;
 use log::debug;
-use std::f32::consts::PI;
 use selflib::utils::{clear_terminal, username_take};
 
 
 fn main () {
+
     env_logger::init();
+
+    let settings = Settings::get_default_settings();
+    
+    let sample_rate = settings.get_sample_rate();
+    let channels = settings.get_channels();
+    let buffer_size = settings.get_buffer_size();
 
     println!("");
     println!("Enter Username:");
     // Add validation process? 
     let instance_name = Arc::new(Mutex::new(username_take()));
     clear_terminal();
-    let (_tx, _rx) = channel::<String>();
 
     // -------- Input Thread ------- //
 
@@ -39,8 +45,6 @@ fn main () {
     mdns.browse_services();
     let user_table = mdns.get_user_table();
 
-    let mut sample_clock = 0f32;
-
     loop {
         // Take user input
         let reader = std::io::stdin();
@@ -50,19 +54,13 @@ fn main () {
 
         if input == "send" {
             loop {
-                let sine_wave: Vec<f32> = (0..BUFFER_SIZE)
-                    .map(|_| {
-                        let value = (sample_clock * FREQUENCY * 2.0 * PI / SAMPLE_RATE).sin() * AMPLITUDE;
-                        sample_clock = (sample_clock + 1.0) % SAMPLE_RATE;
-                        value
-                    }).collect();
 
-                println!("Sine Wave being generated: {:?}", sine_wave);
+                let (output_sine, input_encoder) = channel();
+                let (output_encoder, _input_socket) = channel();
+                let _sine = Sine::new(220.0, 1.0, sample_rate as u32, channels as usize, output_sine, buffer_size);
 
                 // Encode to Opus
-                let chunk = convert_audio_stream_to_opus(&sine_wave).expect("Failed to convert into Opus");
-
-                println!("Conversion to Opus: {:?}", chunk);
+                let chunk = encode_opus(input_encoder, output_encoder).expect("Failed to convert into Opus");
 
                 let socket = UdpSocket::bind(&ip_port).expect("UDP: Failed to bind to socket");
                 for (user, address) in user_table.lock().unwrap().clone() {

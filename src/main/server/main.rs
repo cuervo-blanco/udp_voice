@@ -15,13 +15,15 @@ fn main (){
     let channels = settings.get_channels();
     let (_input_device, output_device) = settings.get_devices();
     let output_device = Arc::new(Mutex::new(output_device));
-    let (_input_config, output_config) = settings.get_config_files();
+    let (_input_config, _output_config) = settings.get_config_files();
     let buffer_size = settings.get_buffer_size();
 
     // System Information 
-    let ip =  local_ip_address::local_ip().unwrap(); debug!("UDP: Local IP Address: {}", ip);
+    let ip =  local_ip_address::local_ip().unwrap(); 
+    debug!("UDP: Local IP Address: {}", ip);
     let port: u16 = 18521;
-    let ip_port = format!("{}:{}", ip, port); debug!("UDP: IP Address & Port: {}", ip);
+    let ip_port = format!("{}:{}", ip, port); 
+    debug!("UDP: IP Address & Port: {}", ip);
 
     // mDNS
     let service_type = "udp_voice._udp.local.";
@@ -31,7 +33,8 @@ fn main (){
         ("service type", service_type), 
         ("version", "0.0.0"),
         ("interface", "server"),
-
+        // Define more properties relevant to the service, such as Room Name
+        // Admin, etc.
     ];
 
     let mdns = MdnsService::new("_udp_voice._udp.local.", properties);
@@ -46,8 +49,6 @@ fn main (){
     let ring = HeapRb::<u8>::new(buffer_size * channels as usize);
     let (mut producer, mut consumer) = ring.split();
 
-    let (output_socket, input_decoder) = channel();
-    let (output_decoder, input_dac) = channel();
 
     std::thread::spawn( move ||{
         loop {
@@ -57,18 +58,18 @@ fn main (){
         }
     });
 
-    let output_device_clone = output_device.clone();
 
+    let output_device_copy = output_device.clone();
     std::thread::spawn(move || {
-        let output_device = output_device_clone.lock().unwrap();
         loop {
+            let (sender_socket, receiver_decoder) = channel();
+            let (sender_decoder, receiver_dac) = channel();
             let mut decode_buffer = vec![0; buffer_size * channels as usize];
             consumer.pop_slice(&mut decode_buffer);
-            if let Ok(_) = output_socket.send(decode_buffer) {
+            if let Ok(_) = sender_socket.send(decode_buffer) {
                 // Now the dec
-                decode_opus(input_decoder, output_decoder);
-                dac(input_dac, buffer_size, output_device);
-
+                let _ = decode_opus(receiver_decoder, sender_decoder);
+                dac(receiver_dac, buffer_size, &output_device_copy);
             }
         }
     });

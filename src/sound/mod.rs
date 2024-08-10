@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{Sender, Receiver};
 use opus::{Encoder, Decoder, Application};
 use cpal::SampleFormat;
@@ -11,7 +12,7 @@ use crate::settings::Settings;
 pub fn dac(
     receiver: Receiver<Vec<f32>>,
     buffer_size: usize,
-    device: cpal::Device,
+    device: &Arc<Mutex<cpal::Device>>,
     ) { 
 
     let settings = Settings::get_default_settings();
@@ -36,6 +37,8 @@ pub fn dac(
 
     let sample_format = config.sample_format();
     let config: cpal::StreamConfig = config.into();
+
+    let device = device.lock().unwrap();
 
     let stream = match sample_format {
         SampleFormat::F32 => device.build_output_stream(
@@ -69,8 +72,8 @@ pub fn dac(
 
 }
 pub fn encode_opus(
-    input: Receiver<Vec<f32>>,
-    output: Sender<Vec<u8>>,
+    receiver: Receiver<Vec<f32>>,
+    sender: Sender<Vec<u8>>,
     ) -> Result<Vec<u8>, opus::Error> {
 
     // Set settings
@@ -85,7 +88,7 @@ pub fn encode_opus(
     
 
     std::thread::spawn( move || {
-        while let Ok(block) = input.recv() {
+        while let Ok(block) = receiver.recv() {
             for sample in block {
                 while producer.is_full() {
                     std::thread::sleep(std::time::Duration::from_millis(1));
@@ -116,14 +119,14 @@ pub fn encode_opus(
         
         let mut encoded_block = vec![0; buffer_size * channels as usize];
         let len = opus_encoder.encode_float(&decoded_block, &mut encoded_block)?;
-        output.send(encoded_block[..len].to_vec()).unwrap();
+        sender.send(encoded_block[..len].to_vec()).unwrap();
         return Ok(encoded_block[..len].to_vec());
     }
 
 }
 pub fn decode_opus(
-    input: Receiver<Vec<u8>>,
-    output: Sender<Vec<f32>>,
+    receiver: Receiver<Vec<u8>>,
+    sender: Sender<Vec<f32>>,
     ) -> Result<Vec<f32>, opus::Error> {
     // Set settings
     let settings = Settings::get_default_settings();
@@ -137,13 +140,18 @@ pub fn decode_opus(
         opus_channels = opus::Channels::Mono;
     }
 
+    let receiver = Arc::new(Mutex::new(receiver));
+
     // Initialize Ring Buffer
     let ring = HeapRb::<u8>::new(buffer_size * channels as usize);
     let (mut producer, mut consumer) = ring.split();
-    
+
+
+    let receiver_copy = Arc::clone(&receiver);
 
     std::thread::spawn( move || {
-        while let Ok(block) = input.recv() {
+        let receiver = receiver_copy.lock().unwrap();
+        while let Ok(block) = receiver.recv() {
             for sample in block {
                 while producer.is_full() {
                     std::thread::sleep(std::time::Duration::from_millis(1));
@@ -166,7 +174,7 @@ pub fn decode_opus(
         
         let mut decoded_block: Vec<f32> = vec![0.0; buffer_size * channels as usize];
         let length = decoder.decode_float(&encoded_block, &mut decoded_block, false)?;
-        output.send(decoded_block[..length].to_vec()).unwrap();
+        sender.send(decoded_block[..length].to_vec()).unwrap();
         return Ok(decoded_block[..length].to_vec());
     }
 }

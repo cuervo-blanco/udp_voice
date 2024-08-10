@@ -7,6 +7,7 @@ use std::net::UdpSocket;
 use selflib::settings::Settings;
 use selflib::sound::{dac, decode_opus};
 use std::sync::mpsc::channel;
+use std::time::Duration;
 
 fn main (){
     env_logger::init();
@@ -75,5 +76,9 @@ fn main (){
     });
 
     // Send this data to a port, have a different Application in Front End.
+    loop {
+        // Do Something;
+        std::thread::sleep(Duration::from_millis(10000));
+    }
 
 }

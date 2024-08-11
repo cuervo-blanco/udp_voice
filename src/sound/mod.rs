@@ -75,27 +75,34 @@ pub fn encode_opus(
     receiver: Receiver<Vec<f32>>,
     sender: Sender<Vec<u8>>,
     ) -> Result<Vec<u8>, opus::Error> {
+    println!("Encoder started");
 
     // Set settings
     let settings = Settings::get_default_settings();
     let channels = settings.get_channels();
     let buffer_size = settings.get_buffer_size();
     let sample_rate = settings.get_sample_rate();
+    println!("Settings: CH {}, BF {}, SR {}", channels, buffer_size, sample_rate);
 
     // Initialize Ring Buffer
     let ring = HeapRb::<f32>::new(buffer_size * channels as usize);
     let (mut producer, mut consumer) = ring.split();
-    
+    println!("Ring Buffer initialized with size: {}", buffer_size * channels as usize);
 
     std::thread::spawn( move || {
+        println!("Spawned producer thread");
         while let Ok(block) = receiver.recv() {
+            println!("Received a block of size {}", block.len());
             for sample in block {
                 while producer.is_full() {
+                    println!("Producer is full, waiting to push...");
                     std::thread::sleep(std::time::Duration::from_millis(1));
                 }
                 producer.try_push(sample).expect("Failed to push into producer");
             }
+            println!("Block successfully pushed to producer");
         }
+        println!("Receiver channels closed, producer thread exiting");
     });
 
     let mut opus_channels: opus::Channels = opus::Channels::Stereo;
@@ -103,23 +110,31 @@ pub fn encode_opus(
     if channels == 1 {
         opus_channels = opus::Channels::Mono;
     }
+    println!("Opus encoder channels set to: {:?}", opus_channels);
 
     // Here the Application can be Voip, Audio, LowDelay
     let mut opus_encoder = Encoder::new(sample_rate as u32, opus_channels, Application::Audio)?;
+    println!("Opus encoder initialized");
 
     loop {
         // Consumer fills encoded_block_buffer, once filled it is returned
         // "Decoded" meaning it hasn't been coded yet
         let mut decoded_block: Vec<f32> = vec![0.0; buffer_size * channels as usize];
+        println!("Prepared decoded block with size: {}", decoded_block.len());
         for sample in decoded_block.iter_mut() {
             while let Some(bit) = consumer.try_pop() {
                 *sample = bit;
             }
         }
+        println!("Filled decoded block buffer");
         
         let mut encoded_block = vec![0; buffer_size * channels as usize];
         let len = opus_encoder.encode_float(&decoded_block, &mut encoded_block)?;
+        println!("Encoded block of size {}", len);
+
         sender.send(encoded_block[..len].to_vec()).unwrap();
+        println!("Encoded block sent through sender channel");
+
         return Ok(encoded_block[..len].to_vec());
     }
 

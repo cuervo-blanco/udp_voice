@@ -145,7 +145,7 @@ pub fn encode_opus(
         debug!("ENCODER: Encoded block of size {}", len);
 
         sender.send(encoded_data.clone()).unwrap();
-        error!("ENCODER: Encoded block sent through sender channel");
+        info!("ENCODER: Encoded block sent through sender channel");
 
     }
 

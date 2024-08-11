@@ -1,3 +1,5 @@
+use ringbuf::HeapRb;
+use ringbuf::traits::{Consumer, Producer, Split, Observer};
 use selflib::mdns_service::MdnsService;
 use selflib::settings::Settings;
 use std::sync::mpsc::channel;
@@ -30,7 +32,6 @@ fn main () {
     // Gather information from client
     let ip =  local_ip_address::local_ip().unwrap(); debug!("UDP: Local IP Address: {}", ip);
     let port: u16 = 18522;
-    let ip_port = format!("{}:{}", ip, port); debug!("UDP: IP Address & Port: {}", ip);
 
 
     // mDNS
@@ -45,6 +46,7 @@ fn main () {
     mdns.browse_services();
     let user_table = mdns.get_user_table();
 
+
     loop {
         // Take user input
         let reader = std::io::stdin();
@@ -55,25 +57,50 @@ fn main () {
         if input == "send" {
             loop {
 
+                let ip_port = format!("{}:{}", ip, port); debug!("UDP: IP Address & Port: {}", ip);
                 let (output_sine, input_encoder) = channel();
-                let (output_encoder, _input_socket) = channel();
+                let (output_encoder, input_buffer) = channel();
                 let _sine = Sine::new(220.0, 1.0, sample_rate as u32, channels as usize, output_sine, buffer_size);
 
-                // Encode to Opus
-                let chunk = encode_opus(input_encoder, output_encoder).expect("Failed to convert into Opus");
+                // Initialize Ring Buffer to store encoded_samples
+                let ring = HeapRb::<u8>::new(buffer_size * channels as usize);
+                let (mut producer, mut consumer) = ring.split();
 
-                let socket = UdpSocket::bind(&ip_port).expect("UDP: Failed to bind to socket");
-                for (user, address) in user_table.lock().unwrap().clone() {
-                    if address == ip.to_string() {
-                        continue;
-                    } else {
-                        let port = format!("{}:18521", address);
-                        // Calculate Time
-                        socket.send_to(&chunk, port.clone()).expect("UDP: Failed to send data");
-                        println!("Sent chunk to {}: {:?}", user, chunk);
+                // Encode to Opus
+                let _chunk = encode_opus(input_encoder, output_encoder).expect("Failed to convert into Opus");
+
+                std::thread::spawn( move || {
+                    while let Ok(block) = input_buffer.recv() {
+                        for sample in block {
+                            while producer.is_full() {
+                                std::thread::sleep(std::time::Duration::from_millis(1));
+                            }
+                            producer.try_push(sample).expect("Failed to push into producer");
+                        }
                     }
-                }
-                clear_terminal();
+                });
+
+                let user_table_clone = user_table.clone();
+
+                std::thread::spawn(move || {
+                    let user_table = user_table_clone.lock().unwrap();
+                    loop {
+                        for (_user, address) in user_table.clone() {
+                        let socket = UdpSocket::bind(&ip_port).expect("UDP: Failed to bind to socket");
+                            let mut buffer: Vec<u8> = vec![0; buffer_size * channels as usize];
+                            let size = consumer.pop_slice(&mut buffer);
+                            let block = &buffer[..size];
+
+                            if address == ip.to_string() {
+                                continue;
+                            } else {
+                                let port = format!("{}:18521", address);
+                                socket.send_to(block, port.clone()).expect("UDP: Failed to send data");
+                            }
+                        }
+                    }
+                });
+
             }
         } else {
             println!("Not a permitted command");

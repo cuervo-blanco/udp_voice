@@ -106,9 +106,9 @@ fn main () {
                                 continue;
                             } else {
                                 let port = format!("{}:18521", address);
-                                println!("Sending data to {}: {}", user, port);
+                                println!("CLIENT: Sending data to {}: {}", user, port);
                                 socket.send_to(block, port.clone()).expect("UDP: Failed to send data");
-                                println!("Data sent successfully to {}", port);
+                                println!("CLIENT: Data sent successfully to {}", port);
                             }
                         }
                     }

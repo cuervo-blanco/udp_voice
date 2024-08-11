@@ -1670,6 +1670,7 @@ version = "0.0.1"
 dependencies = [
  "async-std",
  "bincode",
+ "byteorder",
  "chrono",
  "cpal",
  "env_logger",

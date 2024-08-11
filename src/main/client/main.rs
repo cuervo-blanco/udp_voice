@@ -1,5 +1,6 @@
 use ringbuf::HeapRb;
 use ringbuf::traits::{Consumer, Producer, Split, Observer};
+use byteorder::{BigEndian, WriteBytesExt};
 use selflib::mdns_service::MdnsService;
 use selflib::settings::Settings;
 use std::sync::mpsc::channel;
@@ -72,18 +73,20 @@ fn main () {
                 println!("Opus encoding started successfully");
 
                 std::thread::spawn( move || {
-                    println!("CLIENT: Producer thread started");
-                    while let Ok(block) = input_buffer.recv() {
-                        println!("CLIENT: Received block of size: {}", block.len());
-                        for sample in block {
-                            while producer.is_full() {
-                                std::thread::sleep(std::time::Duration::from_millis(1));
+                    loop {
+                        println!("CLIENT: Producer thread started");
+                        while let Ok(block) = input_buffer.recv() {
+                            println!("CLIENT: Received block of size: {}", block.len());
+                            for sample in block {
+                                while producer.is_full() {
+                                    std::thread::sleep(std::time::Duration::from_millis(1));
+                                }
+                                producer.try_push(sample).expect("Failed to push into producer");
                             }
-                            producer.try_push(sample).expect("Failed to push into producer");
+                            println!("CLIENT: Block successfully pushed to producer");
                         }
-                        println!("CLIENT: Block successfully pushed to producer");
+                        println!("CLIENT: Input buffer channel closed, producer thread exiting");
                     }
-                    println!("CLIENT: Input buffer channel closed, producer thread exiting");
 
                 });
 
@@ -107,7 +110,19 @@ fn main () {
                             } else {
                                 let port = format!("{}:18521", address);
                                 println!("CLIENT: Sending data to {}: {}", user, port);
-                                socket.send_to(block, port.clone()).expect("UDP: Failed to send data");
+
+                                let data_len = block.len() as u32;
+                                let mut packet = Vec::with_capacity(4 + block.len());
+
+                                // Write the length to the header
+                                packet.write_u32::<BigEndian>(data_len).unwrap();
+
+                                // Append the encoded data to the packet
+                                packet.extend_from_slice(&block);
+
+                                // Send the packet
+                                socket.send_to(&packet, port.clone()).expect("CLIENT: Failed to send data");
+
                                 println!("CLIENT: Data sent successfully to {}", port);
                             }
                         }

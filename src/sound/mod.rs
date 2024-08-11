@@ -138,12 +138,13 @@ pub fn encode_opus(
         
         let mut encoded_block = vec![0; buffer_size * channels as usize];
         let len = opus_encoder.encode_float(&decoded_block, &mut encoded_block)?;
+        let encoded_data = encoded_block[..len].to_vec();
         println!("ENCODER: Encoded block of size {}", len);
 
-        sender.send(encoded_block[..len].to_vec()).unwrap();
+        sender.send(encoded_data.clone()).unwrap();
         println!("ENCODER: Encoded block sent through sender channel");
 
-        return Ok(encoded_block[..len].to_vec());
+        return Ok(encoded_data);
     }
 
 }

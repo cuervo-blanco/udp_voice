@@ -1,3 +1,5 @@
+use std::io::Cursor;
+use byteorder::{BigEndian, ReadBytesExt};
 use std::sync::{Arc, Mutex};
 use ringbuf::HeapRb;
 use ringbuf::traits::{Consumer, Producer, Split};
@@ -47,8 +49,6 @@ fn main (){
     println!("SERVER: Binding to UDP socket on {}", ip_port);
     let socket = UdpSocket::bind(ip_port).expect("UDP: Failed to bind socket");
     println!("SERVER: UDP socket bound successfully");
-    let mut buffer = vec![0; buffer_size * channels as usize];
-    println!("SERVER: Initialized buffer with size: {}", buffer.len());
 
     let ring = HeapRb::<u8>::new(buffer_size * channels as usize);
     let (mut producer, mut consumer) = ring.split();
@@ -58,12 +58,26 @@ fn main (){
     std::thread::spawn( move ||{
         println!("SERVER: Started UDP receiving thread");
         loop {
-            if let Ok((amount, source)) = socket.recv_from(&mut buffer) {
-                println!("SERVER: Received {} bytes from {}", amount, source);
-                producer.push_slice(&mut buffer[..amount]);
-                println!("SERVER: Pushed {} bytes into ring buffer", amount);
+            let mut header = [0u8; 4];
+            // Receive the header first (4 bytes indicating the length of the data)
+            if let Ok((_,source)) = socket.recv_from(&mut header) {
+                println!("SERVER: Received header from {}", source);
+
+                let mut cursor = Cursor::new(&header);
+                let data_len = cursor.read_u32::<BigEndian>().unwrap();
+                println!("SERVER: Expecting to recieve {} bytes of data", data_len);
+                
+                let mut encoded_data = vec![0; data_len as usize];
+
+                if let Ok((amount, source)) = socket.recv_from(&mut encoded_data) {
+                    println!("SERVER: Received {} bytes from {}", amount, source);
+                    producer.push_slice(&mut encoded_data[..amount]);
+                    println!("SERVER: Pushed {} bytes into ring buffer", amount);
+                } else {
+                    println!("SERVER: Failed to receive data on UDP socket");
+                }
             } else {
-                println!("SERVER: Failed to receive data on UDP socket");
+                println!("SERVER: Failed to receive header on UDP socket");
             }
         }
     });

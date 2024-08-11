@@ -52,7 +52,7 @@ impl Sine {
 
                     })
                 .collect();
-                info!("Sine::new - Generated block with phase: {}", phase);
+                info!("\rSine::new - Generated block with phase: {}", phase);
                 if output.send(block).is_err(){
                     warn!("Sine::new - Failed to send block, terminating sine
                     wave generator thread");

@@ -35,7 +35,7 @@ impl Settings {
             output_device.default_output_config()
             .expect("Failed to get output_config")
             );
-        let sample_rate = output_config
+        let _sample_rate = output_config
             .sample_rate();
         let channels = output_config
             .channels();
@@ -48,7 +48,7 @@ impl Settings {
                 input_config, 
                 output_config,
                 ),
-            sample_rate,
+            sample_rate: cpal::SampleRate(48000),
             channels,
             buffer_size: 960 as usize,
             //test-tone

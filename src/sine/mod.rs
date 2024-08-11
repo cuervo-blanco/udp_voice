@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::sync::mpsc::{Sender, Receiver};
 use cpal::SampleFormat;
 use cpal::traits::{DeviceTrait, StreamTrait};
@@ -52,7 +53,9 @@ impl Sine {
 
                     })
                 .collect();
-                info!("\rSine::new - Generated block with phase: {}", phase);
+                print!("\rSine::new - Generated block with phase: {}", phase);
+                std::io::stdout().flush().unwrap();
+
                 if output.send(block).is_err(){
                     warn!("Sine::new - Failed to send block, terminating sine
                     wave generator thread");
@@ -89,7 +92,8 @@ impl Sine {
                     }
                     producer.try_push(sample).expect("Sine::play - Failed to push into producer");
                 }
-                info!("Sine::play - Block successfully pushed to producer");
+                print!("\rSine::play - Block successfully pushed to producer");
+                std::io::stdout().flush().unwrap();
             }
             warn!("Sine::play - Receiver channel closed producer thread exiting");
         });
@@ -105,6 +109,9 @@ impl Sine {
                     &config,
                     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                         for sample in data {
+                            print!("\rPlaying sample: {:?}", *sample);
+                            std::io::stdout().flush().unwrap();
+
                             *sample = consumer.try_pop().unwrap_or(0.0);
                         }
                     },

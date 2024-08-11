@@ -8,7 +8,7 @@ use selflib::sound::encode_opus;
 use selflib::sine::Sine;
 use std::sync::{Arc, Mutex};
 use std::net::UdpSocket;
-use log::debug;
+use log::{debug, info, warn};
 use selflib::utils::{clear_terminal, username_take};
 
 
@@ -57,7 +57,6 @@ fn main () {
 
         if input == "send" {
             loop {
-
                 let ip_port = format!("{}:{}", ip, port); debug!("UDP: IP Address & Port: {}", ip);
                 let (output_sine, input_encoder) = channel();
                 let (output_encoder, input_buffer) = channel();
@@ -68,24 +67,24 @@ fn main () {
                 let (mut producer, mut consumer) = ring.split();
 
                 // Encode to Opus
-                println!("Starting Opus encoding");
-                let _chunk = encode_opus(input_encoder, output_encoder).expect("Failed to convert into Opus");
-                println!("Opus encoding started successfully");
+                info!("Starting Opus encoding");
+                let _ = encode_opus(input_encoder, output_encoder).expect("Failed to convert into Opus");
+                info!("Opus encoding started successfully");
 
                 std::thread::spawn( move || {
                     loop {
-                        println!("CLIENT: Producer thread started");
+                        info!("CLIENT: Producer thread started");
                         while let Ok(block) = input_buffer.recv() {
-                            println!("CLIENT: Received block of size: {}", block.len());
+                            debug!("CLIENT: Received block of size: {}", block.len());
                             for sample in block {
                                 while producer.is_full() {
                                     std::thread::sleep(std::time::Duration::from_millis(1));
                                 }
-                                producer.try_push(sample).expect("Failed to push into producer");
+                                producer.try_push(sample).expect("CLIENT:Failed to push into producer");
                             }
-                            println!("CLIENT: Block successfully pushed to producer");
+                            info!("CLIENT: Block successfully pushed to producer");
                         }
-                        println!("CLIENT: Input buffer channel closed, producer thread exiting");
+                        info!("CLIENT: Input buffer channel closed, producer thread exiting");
                     }
 
                 });
@@ -93,23 +92,23 @@ fn main () {
                 let user_table_clone = user_table.clone();
 
                 std::thread::spawn(move || {
-                    println!("CLIENT: UDP sender thread started");
+                    info!("CLIENT: UDP sender thread started");
                     let user_table = user_table_clone.lock().unwrap();
                     loop {
                         for (user, address) in user_table.clone() {
-                            println!("CLIENT: Preparing to send to address: {}", address);
+                            debug!("CLIENT: Preparing to send to address: {}", address);
                             let socket = UdpSocket::bind(&ip_port).expect("UDP: Failed to bind to socket");
                             let mut buffer: Vec<u8> = vec![0; buffer_size * channels as usize];
                             let size = consumer.pop_slice(&mut buffer);
                             let block = &buffer[..size];
-                            println!("CLIENT: Popped slice of size: {}", size);
+                            debug!("CLIENT: Popped slice of size: {}", size);
 
                             if address == ip.to_string() {
-                                println!("CLIENT: Skipping send to local address: {}", address);
+                                debug!("CLIENT: Skipping send to local address: {}", address);
                                 continue;
                             } else {
                                 let port = format!("{}:18521", address);
-                                println!("CLIENT: Sending data to {}: {}", user, port);
+                                debug!("CLIENT: Sending data to {}: {}", user, port);
 
                                 let data_len = block.len() as u32;
                                 let mut packet = Vec::with_capacity(4 + block.len());
@@ -123,7 +122,7 @@ fn main () {
                                 // Send the packet
                                 socket.send_to(&packet, port.clone()).expect("CLIENT: Failed to send data");
 
-                                println!("CLIENT: Data sent successfully to {}", port);
+                                debug!("CLIENT: Data sent successfully to {}", port);
                             }
                         }
                     }
@@ -131,7 +130,7 @@ fn main () {
 
             }
         } else {
-            println!("Not a permitted command");
+            warn!("Not a permitted command");
             continue;
         }
     }

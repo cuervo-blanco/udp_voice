@@ -67,35 +67,48 @@ fn main () {
                 let (mut producer, mut consumer) = ring.split();
 
                 // Encode to Opus
+                println!("Starting Opus encoding");
                 let _chunk = encode_opus(input_encoder, output_encoder).expect("Failed to convert into Opus");
+                println!("Opus encoding started successfully");
 
                 std::thread::spawn( move || {
+                    println!("CLIENT: Producer thread started");
                     while let Ok(block) = input_buffer.recv() {
+                        println!("CLIENT: Received block of size: {}", block.len());
                         for sample in block {
                             while producer.is_full() {
                                 std::thread::sleep(std::time::Duration::from_millis(1));
                             }
                             producer.try_push(sample).expect("Failed to push into producer");
                         }
+                        println!("CLIENT: Block successfully pushed to producer");
                     }
+                    println!("CLIENT: Input buffer channel closed, producer thread exiting");
+
                 });
 
                 let user_table_clone = user_table.clone();
 
                 std::thread::spawn(move || {
+                    println!("CLIENT: UDP sender thread started");
                     let user_table = user_table_clone.lock().unwrap();
                     loop {
-                        for (_user, address) in user_table.clone() {
-                        let socket = UdpSocket::bind(&ip_port).expect("UDP: Failed to bind to socket");
+                        for (user, address) in user_table.clone() {
+                            println!("CLIENT: Preparing to send to address: {}", address);
+                            let socket = UdpSocket::bind(&ip_port).expect("UDP: Failed to bind to socket");
                             let mut buffer: Vec<u8> = vec![0; buffer_size * channels as usize];
                             let size = consumer.pop_slice(&mut buffer);
                             let block = &buffer[..size];
+                            println!("CLIENT: Popped slice of size: {}", size);
 
                             if address == ip.to_string() {
+                                println!("CLIENT: Skipping send to local address: {}", address);
                                 continue;
                             } else {
                                 let port = format!("{}:18521", address);
+                                println!("Sending data to {}: {}", user, port);
                                 socket.send_to(block, port.clone()).expect("UDP: Failed to send data");
+                                println!("Data sent successfully to {}", port);
                             }
                         }
                     }

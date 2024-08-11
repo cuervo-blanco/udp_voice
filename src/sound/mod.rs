@@ -95,7 +95,6 @@ pub fn encode_opus(
             println!("Received a block of size {}", block.len());
             for sample in block {
                 while producer.is_full() {
-                    println!("Producer is full, waiting to push...");
                     std::thread::sleep(std::time::Duration::from_millis(1));
                 }
                 producer.try_push(sample).expect("Failed to push into producer");

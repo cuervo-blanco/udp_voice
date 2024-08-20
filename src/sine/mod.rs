@@ -14,6 +14,7 @@ pub struct Sine {
     amplitude: f32,
     sample_rate: u32,
     channels: usize,
+    value: Option<f32>,
 }
 impl Sine {
 
@@ -30,11 +31,12 @@ impl Sine {
         amplitude: {}, sample_rate: {}, channels: {}, buffer_size: {}",
         frequency, amplitude, sample_rate, channels, buffer_size);
 
-        let sine = Self {
+        let mut sine = Self {
             frequency,
             amplitude,
             sample_rate,
-            channels
+            channels,
+            value: None
         };
 
         std::thread::spawn( move || {
@@ -45,16 +47,16 @@ impl Sine {
                 let block: Vec<f32> = (0..buffer_size)
                     .flat_map(|_| {
                         let sample = (phase).sin() * sine.amplitude;
+
+
                         phase += phase_increment;
                         if phase > 2.0 * PI {
                             phase -= 2.0 * PI;
                         }
+                        sine.value = Some(sample);
                         std::iter::repeat(sample).take(channels as usize)
-
                     })
                 .collect();
-                print!("\rSine::new - Generated block with phase: {}", phase);
-                std::io::stdout().flush().unwrap();
 
                 if output.send(block).is_err(){
                     warn!("Sine::new - Failed to send block, terminating sine
@@ -109,8 +111,7 @@ impl Sine {
                     &config,
                     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                         for sample in data {
-                            print!("\rPlaying sample: {:?}", *sample);
-                            std::io::stdout().flush().unwrap();
+                            info!("Playing sample: {:?}", *sample);
 
                             *sample = consumer.try_pop().unwrap_or(0.0);
                         }

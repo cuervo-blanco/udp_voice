@@ -1,45 +1,55 @@
-use ringbuf::HeapRb;
-use ringbuf::traits::{Consumer, Producer, Split, Observer};
+#[allow(unused_imports)]
+use std::{
+    io::{Write, stdout},
+    sync::{
+        Arc, Mutex,
+        mpsc::channel,
+    },
+    net::UdpSocket,
+};
+use ringbuf::{
+    traits::{Consumer, Producer, Split, Observer},
+    HeapRb,
+};
 use byteorder::{BigEndian, WriteBytesExt};
-use selflib::mdns_service::MdnsService;
-use selflib::settings::Settings;
-use std::sync::mpsc::channel;
-use selflib::sound::encode_opus;
-use selflib::sine::Sine;
-use std::sync::{Arc, Mutex};
-use std::net::UdpSocket;
-use log::{debug, info, warn};
-use selflib::utils::{clear_terminal, username_take};
+#[allow(unused_imports)]
+use log::{debug, info, warn, error};
+#[allow(unused_imports)]
+use selflib::{
+    utils::{clear_terminal, username_take},
+    mdns_service::MdnsService,
+    settings::Settings,
+    sine::Sine,
+    sound::encode_opus,
+};
+use colored::*;
 
-
-fn main () {
+fn main () -> Result<(), Box<dyn std::error::Error>> {
 
     env_logger::init();
 
     let settings = Settings::get_default_settings();
-    
     let sample_rate = settings.get_sample_rate();
     let channels = settings.get_channels();
     let buffer_size = settings.get_buffer_size();
 
     println!("");
-    println!("Enter Username:");
+    println!("{}", "Enter Username:".cyan());
     // Add validation process? 
     let instance_name = Arc::new(Mutex::new(username_take()));
     clear_terminal();
 
-    // -------- Input Thread ------- //
-
     // Gather information from client
-    let ip =  local_ip_address::local_ip().unwrap(); debug!("UDP: Local IP Address: {}", ip);
+    let ip =  local_ip_address::local_ip().unwrap(); 
+    let _ip_check = format!("UDP: Local IP Address: {}", ip); 
+    println!("");
     let port: u16 = 18522;
-
 
     // mDNS
     let properties = vec![
         ("service name", "udp voice"), 
         ("service type", "_udp_voice._udp_local."), 
-        ("version", "0.0.0"),
+        ("version", "0.0.2"),
         ("interface", "client")
     ];
     let mdns = MdnsService::new("_udp_voice._udp.local.", properties);
@@ -47,8 +57,10 @@ fn main () {
     mdns.browse_services();
     let user_table = mdns.get_user_table();
 
-
+    // Main Loop
     loop {
+        // Update the window buffer with the current status
+
         // Take user input
         let reader = std::io::stdin();
         let mut buffer: String = String::new();
@@ -57,9 +69,13 @@ fn main () {
 
         if input == "send" {
             loop {
-                let ip_port = format!("{}:{}", ip, port); debug!("UDP: IP Address & Port: {}", ip);
+                let ip_port = format!("{}:{}", ip, port); 
+                let ip_check = format!("UDP: IP Address & Port: {}", ip_port).blue();
+                println!("{}", &ip_check);
                 let (output_sine, input_encoder) = channel();
                 let (output_encoder, input_buffer) = channel();
+
+                println!("{}", "Generating Sound Wave...".cyan());
                 let _sine = Sine::new(220.0, 1.0, sample_rate as u32, channels as usize, output_sine, buffer_size);
 
                 // Initialize Ring Buffer to store encoded_samples
@@ -67,24 +83,37 @@ fn main () {
                 let (mut producer, mut consumer) = ring.split();
 
                 // Encode to Opus
-                info!("Starting Opus encoding");
-                let _ = encode_opus(input_encoder, output_encoder).expect("Failed to convert into Opus");
-                info!("Opus encoding started successfully");
+                println!("{}", "Starting Opus Encoding...".cyan());
+                match encode_opus(input_encoder, output_encoder) {
+                    Ok(_) => {
+                        println!("{}","Opus Encoding started successfully...".green());
+                    }
+                    Err(e) => {
+                        println!("{}", "Failed to start Opus encoding".red());
+                        error!("Failed to start Opus encoding: {:?}", e);
+                    }
+                }
 
                 std::thread::spawn( move || {
+                    let mut counter = 0;
                     loop {
-                        info!("CLIENT: Producer thread started");
                         while let Ok(block) = input_buffer.recv() {
-                            debug!("CLIENT: Received block of size: {}", block.len());
+                            println!("{}", format!("CLIENT: RECEIVED block of size: {}", block.len()).yellow());
                             for sample in block {
                                 while producer.is_full() {
                                     std::thread::sleep(std::time::Duration::from_millis(1));
                                 }
+                                counter += 1;
                                 producer.try_push(sample).expect("CLIENT:Failed to push into producer");
+                                if counter % 48000 == 0 {
+                                    print!("\x1B[23;1H");
+                                    print!("\r{}", format!("ENCODER: Pushing into buffer: {:.5}", &sample).magenta());
+                                    std::io::stdout().flush().unwrap();
+                                }
                             }
-                            info!("CLIENT: Block successfully pushed to producer");
+                            println!("{}", "CLIENT: Block successfully pushed to producer".green());
                         }
-                        info!("CLIENT: Input buffer channel closed, producer thread exiting");
+                        // println!("{}", "CLIENT: Input buffer channel closed, producer thread exiting".yellow());
                     }
 
                 });
@@ -92,23 +121,22 @@ fn main () {
                 let user_table_clone = user_table.clone();
 
                 std::thread::spawn(move || {
-                    info!("CLIENT: UDP sender thread started");
+                    println!("{}", "CLIENT: UDP sender thread started".cyan());
                     let user_table = user_table_clone.lock().unwrap();
                     loop {
                         for (user, address) in user_table.clone() {
-                            debug!("CLIENT: Preparing to send to address: {}", address);
                             let socket = UdpSocket::bind(&ip_port).expect("UDP: Failed to bind to socket");
                             let mut buffer: Vec<u8> = vec![0; buffer_size * channels as usize];
                             let size = consumer.pop_slice(&mut buffer);
                             let block = &buffer[..size];
-                            debug!("CLIENT: Popped slice of size: {}", size);
+                            println!("{}", format!("CLIENT: Popped slice of size: {}", size).cyan());
 
-                            if address == ip.to_string() {
-                                debug!("CLIENT: Skipping send to local address: {}", address);
-                                continue;
-                            } else {
+                            //if address == ip.to_string() {
+                                // println!("{}", format!("CLIENT: Skipping send to local address: {}", address).blue());
+                                //continue;
+                            //} else {
                                 let port = format!("{}:18521", address);
-                                debug!("CLIENT: Sending data to {}: {}", user, port);
+                                println!("{}", format!("CLIENT: Sending data to {}: {}", user, port).cyan());
 
                                 let data_len = block.len() as u32;
                                 let mut packet = Vec::with_capacity(4 + block.len());
@@ -122,17 +150,20 @@ fn main () {
                                 // Send the packet
                                 socket.send_to(&packet, port.clone()).expect("CLIENT: Failed to send data");
 
-                                debug!("CLIENT: Data sent successfully to {}", port);
-                            }
+                                println!("{}", format!("CLIENT: Data sent successfully to {}", port).green());
+                            //}
                         }
                     }
                 });
 
             }
+        } else if input == "exit" {
+            return Ok(());
         } else {
-            warn!("Not a permitted command");
+            println!("{}", "Not a permitted command".red());
             continue;
-        }
+        } 
     }
-    
+
 }
+

@@ -23,6 +23,7 @@ log = "0.4.22"
 env_logger = "0.11.5"
 chrono = "0.4"
 byteorder = "1.5.0"
+colored = "2.1.0"
 
 [lib]
 name = "selflib"
@@ -42,3 +43,4 @@ path = "src/main/sine/main.rs"
 [[bin]]
 name = "test"
 path = "src/main/test/main.rs"
+

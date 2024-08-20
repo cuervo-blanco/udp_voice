@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use ringbuf::HeapRb;
 use ringbuf::traits::{Consumer, Producer, Split};
 use selflib::mdns_service::MdnsService;
+#[allow(unused_imports)]
 use log::{debug, info, warn, error};
 use std::net::UdpSocket;
 use selflib::settings::Settings;
@@ -23,10 +24,10 @@ fn main (){
 
     // System Information 
     let ip =  local_ip_address::local_ip().unwrap(); 
-    debug!("UDP: Local IP Address: {}", ip);
+    println!("UDP: Local IP Address: {}", ip);
     let port: u16 = 18521;
     let ip_port = format!("{}:{}", ip, port); 
-    debug!("UDP: IP Address & Port: {}", ip);
+    println!("UDP: IP Address & Port: {}", ip);
 
     // mDNS
     let service_type = "udp_voice._udp.local.";
@@ -46,35 +47,35 @@ fn main (){
     mdns.browse_services();
 
     // 1. Listen for udp messages in a port
-    debug!("SERVER: Binding to UDP socket on {}", ip_port);
+    println!("SERVER: Binding to UDP socket on {}", ip_port);
     let socket = UdpSocket::bind(ip_port).expect("UDP: Failed to bind socket");
-    info!("SERVER: UDP socket bound successfully");
+    println!("SERVER: UDP socket bound successfully");
 
     let ring = HeapRb::<u8>::new(buffer_size * channels as usize);
     let (mut producer, mut consumer) = ring.split();
-    debug!("SERVER: Initialized ring buffer with size: {}", buffer_size * channels as usize);
+    println!("SERVER: Initialized ring buffer with size: {}", buffer_size * channels as usize);
 
 
     std::thread::spawn( move ||{
-        info!("SERVER: Started UDP receiving thread");
+        println!("SERVER: Started UDP receiving thread");
         loop {
             let mut header = [0u8; 4];
             // Receive the header first (4 bytes indicating the length of the data)
             if let Ok((_,source)) = socket.recv_from(&mut header) {
-                debug!("SERVER: Received header from {}", source);
+                println!("SERVER: Received header from {}", source);
 
                 let mut cursor = Cursor::new(&header);
                 let data_len = cursor.read_u32::<BigEndian>().unwrap();
-                debug!("SERVER: Expecting to recieve {} bytes of data", data_len);
+                println!("SERVER: Expecting to recieve {} bytes of data", data_len);
                 
                 let mut encoded_data = vec![0; data_len as usize];
 
                 if let Ok((amount, source)) = socket.recv_from(&mut encoded_data) {
-                    debug!("SERVER: Received {} bytes from {}", amount, source);
+                    println!("SERVER: Received {} bytes from {}", amount, source);
                     producer.push_slice(&mut encoded_data[..amount]);
-                    debug!("SERVER: Pushed {} bytes into ring buffer", amount);
+                    println!("SERVER: Pushed {} bytes into ring buffer", amount);
                 } else {
-                    warn!("SERVER: Failed to receive data on UDP socket");
+                    println!("SERVER: Failed to receive data on UDP socket");
                 }
             } else {
                 error!("SERVER: Failed to receive header on UDP socket");
@@ -85,22 +86,22 @@ fn main (){
 
     let output_device_copy = output_device.clone();
     std::thread::spawn(move || {
-        info!("SERVER: Started audio processing thread");
+        println!("SERVER: Started audio processing thread");
         loop {
             let (sender_socket, receiver_decoder) = channel();
             let (sender_decoder, receiver_dac) = channel();
 
             let mut decode_buffer = vec![0; buffer_size * channels as usize];
             let bytes_popped = consumer.pop_slice(&mut decode_buffer);
-            debug!("SERVER: Popped {} bytes from ring buffer", bytes_popped);
+            println!("SERVER: Popped {} bytes from ring buffer", bytes_popped);
             if let Ok(_) = sender_socket.send(decode_buffer) {
                 // Now the dec
                 let _ = decode_opus(receiver_decoder, sender_decoder);
-                info!("SERVER: Opus decoding completed, sending to DAC");
+                println!("SERVER: Opus decoding completed, sending to DAC");
                 dac(receiver_dac, buffer_size, &output_device_copy);
-                info!("SERVER: Audio sent to DAC");
+                println!("SERVER: Audio sent to DAC");
             } else {
-                warn!("SERVER: Failed to send data to decoder");
+                println!("SERVER: Failed to send data to decoder");
             }
         }
     });

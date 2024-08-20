@@ -1,4 +1,5 @@
-use std::io::Write;
+#[allow(unused_imports)]
+use std::io::{Write, stdout};
 
 pub fn  clear_terminal() {
     print!("\x1B[2J");
@@ -13,3 +14,4 @@ pub fn username_take()-> String {
     let instance_name = instance_name.replace("\n", "").replace(" ", "_");
     instance_name
 }
+

@@ -8,7 +8,9 @@ use ringbuf::{
     HeapRb,
 };
 use log::{info, warn, error, debug};
+#[allow(unused_imports)]
 use crate::settings::Settings;
+
 
 pub fn dac(
     receiver: Receiver<Vec<f32>>,
@@ -84,7 +86,7 @@ pub fn dac(
 pub fn encode_opus(
     receiver: Receiver<Vec<f32>>,
     sender: Sender<Vec<u8>>,
-    ) -> Result<Vec<u8>, opus::Error> {
+    ) -> Result<(), opus::Error> {
     info!("ENCODER: Encoder started");
 
     // Set settings
@@ -92,22 +94,32 @@ pub fn encode_opus(
     let channels = settings.get_channels();
     let buffer_size = settings.get_buffer_size();
     let sample_rate = settings.get_sample_rate();
-    debug!("ENCODER: Settings: CH {}, BF {}, SR {}", channels, buffer_size, sample_rate);
+    let specs = format!("ENCODER: CHANNELS: {}, BUFFER_RATE: {}, SAMPLE_RATE: {}", channels, buffer_size, sample_rate);
+    println!("{}", &specs);
 
     // Initialize Ring Buffer
     let ring = HeapRb::<f32>::new(buffer_size * channels as usize);
     let (mut producer, mut consumer) = ring.split();
-    debug!("ENCODER: Ring Buffer initialized with size: {} bytes", buffer_size * channels as usize);
+    let ring_init = format!("ENCODER: Ring Buffer initialized with size: {} bytes", buffer_size * channels as usize);
+    println!("{}", &ring_init);
 
     std::thread::spawn( move || {
-        info!("ENCODER: Spawned producer thread");
+        println!("ENCODER: Spawned producer thread");
+        let mut counter = 0;
         while let Ok(block) = receiver.recv() {
-            debug!("ENCODER: Received a block of size {}", block.len());
+
+            println!("ENCODER: Received a block of size: {}", block.len());
             for sample in block {
                 while producer.is_full() {
                     std::thread::sleep(std::time::Duration::from_millis(1));
                 }
+                counter += 1;
                 producer.try_push(sample).expect("Failed to push into producer");
+
+                if counter % 48000 == 0 {
+                    println!("ENCODER: Pushing into buffer: {}", &sample);
+                }
+
             }
             info!("ENCODER: Block successfully pushed to producer");
         }
@@ -121,31 +133,42 @@ pub fn encode_opus(
     } else if channels > 2 {
         warn!("ENCODER: Channels are more than 2");
     }
-    debug!("ENCODER: Opus encoder channels set to: {:?}", opus_channels);
+
+    let opus_info = format!("ENCODER: Opus encoder channels set to: {:?}", opus_channels);
+    println!("{}", &opus_info);
 
     // Here the Application can be Voip, Audio, LowDelay
     let mut opus_encoder = Encoder::new(sample_rate as u32, opus_channels, Application::Audio)?;
-    info!("ENCODER: Opus encoder initialized");
+    println!("ENCODER: Opus encoder initialized");
 
     loop {
         // Consumer fills encoded_block_buffer, once filled it is returned
         // "Decoded" meaning it hasn't been coded yet
+        let mut counter = 0;
         let mut decoded_block: Vec<f32> = vec![0.0; buffer_size * channels as usize];
-        debug!("ENCODER: Prepared decoded block with size: {}", decoded_block.len());
+
+        println!("ENCODER: Prepared decoded block with size: {}", decoded_block.len());
+
         for sample in decoded_block.iter_mut() {
             while let Some(bit) = consumer.try_pop() {
                 *sample = bit;
+                counter += 1;
+                if counter % 48000 == 0 {
+                    println!("ENCODER: Pushing into decoded_block: {}", *sample);
+                }
+
             }
         }
-        info!("ENCODER: Filled decoded block buffer");
+        println!("ENCODER: Filled decoded block buffer");
         
         let mut encoded_block = vec![0; buffer_size * channels as usize];
         let len = opus_encoder.encode_float(&decoded_block, &mut encoded_block)?;
         let encoded_data = encoded_block[..len].to_vec();
-        debug!("ENCODER: Encoded block of size {}", len);
+        println!("ENCODER: Encoded block of size: {}", len);
 
         sender.send(encoded_data.clone()).unwrap();
-        info!("ENCODER: Encoded block sent through sender channel");
+        println!("ENCODER: Encoded block sent through sender channel");
+        return Ok(());
 
     }
 

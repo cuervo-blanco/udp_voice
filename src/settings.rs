@@ -52,7 +52,7 @@ impl Settings {
             channels,
             buffer_size: 960 as usize,
             //test-tone
-            frequency: 256.0,
+            frequency: 0.001,
             amplitude: 1.0,
 
         };

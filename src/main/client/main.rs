@@ -72,15 +72,13 @@ fn main () -> Result<(), Box<dyn std::error::Error>> {
                 let ip_port = format!("{}:{}", ip, port); 
                 let ip_check = format!("UDP: IP Address & Port: {}", ip_port).blue();
                 println!("{}", &ip_check);
+                // The sine's output goes into the encoder's input
+                // The encoder's output goes into the buffer's input
                 let (output_sine, input_encoder) = channel();
                 let (output_encoder, input_buffer) = channel();
 
                 println!("{}", "Generating Sound Wave...".cyan());
                 let _sine = Sine::new(220.0, 1.0, sample_rate as u32, channels as usize, output_sine, buffer_size);
-
-                // Initialize Ring Buffer to store encoded_samples
-                let ring = HeapRb::<u8>::new(buffer_size * channels as usize);
-                let (mut producer, mut consumer) = ring.split();
 
                 // Encode to Opus
                 println!("{}", "Starting Opus Encoding...".cyan());
@@ -93,6 +91,10 @@ fn main () -> Result<(), Box<dyn std::error::Error>> {
                         error!("Failed to start Opus encoding: {:?}", e);
                     }
                 }
+
+                // Initialize Ring Buffer to store encoded_samples
+                let ring = HeapRb::<u8>::new(buffer_size * channels as usize);
+                let (mut producer, mut consumer) = ring.split();
 
                 std::thread::spawn( move || {
                     let mut counter = 0;

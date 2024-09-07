@@ -1,12 +1,11 @@
 use cpal::Device;
 use cpal::traits::{DeviceTrait, HostTrait};
 
+pub trait Settings {
+    fn get_default_settings() -> Self;
+}
 
-// Let's objectify this, so that instead of it being global variables is
-// an object that returns these computations
-//
-
-pub struct Settings {
+pub struct ApplicationSettings {
     // System Config
     #[allow(dead_code)]
     host: cpal::Host,
@@ -15,14 +14,10 @@ pub struct Settings {
     sample_rate: cpal::SampleRate,
     channels: cpal::ChannelCount,
     buffer_size: usize,
-    // Test Tone
-    frequency: f32,
-    amplitude: f32
 }
 
-impl Settings {
-    pub fn get_default_settings() -> Self {
-
+impl Settings for ApplicationSettings {
+    fn get_default_settings() -> Self {
         let host = cpal::default_host();
         let (input_device, output_device) = (
             host.default_input_device().unwrap(), 
@@ -51,14 +46,13 @@ impl Settings {
             sample_rate: cpal::SampleRate(48000),
             channels,
             buffer_size: 960 as usize,
-            //test-tone
-            frequency: 0.001,
-            amplitude: 1.0,
-
         };
 
         settings
     }
+}
+
+impl ApplicationSettings {
 
     // Get functions: 
     pub fn get_buffer_size(&self) -> usize {
@@ -79,19 +73,8 @@ impl Settings {
         ) {
         self.config_files.clone()
     }
-    pub fn get_amplitude(&self) -> f32 {
-        self.amplitude
-    }
         
-
     // Set Functions
-    pub fn set_amplitude(mut self, quantity: f32) {
-        self.amplitude = quantity;
-    }
-    pub fn set_frequency(mut self, frequency: f32) {
-        self.frequency = frequency;
-
-    }
     pub fn set_output_device(self) {
         todo!()
     }
@@ -102,4 +85,32 @@ impl Settings {
        self.buffer_size = buffer_size;
     }
 
+}
+
+pub struct TestToneSettings {
+    frequency: f32,
+    amplitude: f32
+}
+
+impl Settings for TestToneSettings {
+    fn get_default_settings() -> Self {
+        let test_tone = Self {
+            amplitude: 1.0,
+            frequency: 400.0,
+        };
+        test_tone
+    }
+}
+
+impl TestToneSettings {
+    pub fn get_amplitude(&self) -> f32 {
+        self.amplitude
+    }
+    pub fn set_amplitude(mut self, quantity: f32) {
+        self.amplitude = quantity;
+    }
+    pub fn set_frequency(mut self, frequency: f32) {
+        self.frequency = frequency;
+
+    }
 }

@@ -98,6 +98,7 @@ pub fn encode_opus(
     println!("{}", &specs);
 
     // Initialize Ring Buffer
+    // This ring buffer stores incoming PCM data
     let ring = HeapRb::<f32>::new(buffer_size * channels as usize);
     let (mut producer, mut consumer) = ring.split();
     let ring_init = format!("ENCODER: Ring Buffer initialized with size: {} bytes", buffer_size * channels as usize);

@@ -131,7 +131,7 @@ fn main () -> Result<(), Box<dyn std::error::Error>> {
                                     packet.extend_from_slice(&batch_buffer);
 
                                     // println!("{}", format!("Packet: {:?}", packet).yellow());
-                                    println!("Packet length: {:?}", packet.len());
+                                    // println!("Packet length: {:?}", packet.len());
                                     socket.send_to(&packet, &port).expect("Failed to send data");
                                 }
                                 offset = 0;  // Reset offset after sending

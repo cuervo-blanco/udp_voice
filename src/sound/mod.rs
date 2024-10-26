@@ -206,6 +206,39 @@ pub fn encode_opus(
     Ok(())
 }
 
+
+pub fn de_encode_opus(
+    receiver: Receiver<Vec<u8>>,
+    sender: Sender<Vec<f32>>,
+) -> Result<(), opus::Error> {
+    let settings: ApplicationSettings = Settings::get_default_settings();
+    let channels = settings.get_channels();
+    let buffer_size = settings.get_buffer_size();
+    let sample_rate = settings.get_sample_rate();
+    let opus_channels = if channels == 1 { opus::Channels::Mono } else { opus::Channels::Stereo };
+
+    // println!("Encoder initialized with sample rate: {}, channels: {}", sample_rate, channels);
+    // Double buffers for storing audio chunks
+    while let Ok(block) = receiver.recv() {
+        let mut opus_decoder = Decoder::new(
+            sample_rate as u32, 
+            opus_channels, 
+            )?;
+        // Swap active buffers to avoid blocking
+        // println!("Copied new audio block of size {} into inactive buffer", block.len());
+        let mut decoded_block = vec![0.0; buffer_size * channels as usize];
+        if let Ok(len) = opus_decoder.decode_float(&block, &mut decoded_block, true) {
+            let data_len = format!("ENCODER: Decoded block of size: {}", len).magenta();
+            println!("{data_len}");
+            let encoded_data = decoded_block[..len].to_vec();
+            // println!("Block: {:?}", encoded_data);
+            sender.send(encoded_data).expect("Failed to send encoded data");
+            // println!("Encoded data sent to output channel");
+        }
+    }
+    Ok(())
+}
+
 pub fn decode_opus(
     receiver: Receiver<Vec<u8>>,
     sender: Sender<Vec<f32>>,

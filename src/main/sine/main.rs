@@ -1,6 +1,6 @@
 use cpal::SampleFormat;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use selflib::settings::Settings;
+use selflib::settings::{Settings, ApplicationSettings};
 use std::env;
 use std::f32::consts::PI;
 use ringbuf::{
@@ -11,7 +11,7 @@ use ringbuf::{
 
 pub fn main() {
 
-    let settings = Settings::get_default_settings();
+    let settings: ApplicationSettings = Settings::get_default_settings();
     let buffer_size = settings.get_buffer_size();
     let amplitude = settings.get_amplitude();
     // Command Line Arguments

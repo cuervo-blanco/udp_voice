@@ -7,7 +7,7 @@ use selflib::mdns_service::MdnsService;
 #[allow(unused_imports)]
 use log::{debug, info, warn, error};
 use std::net::UdpSocket;
-use selflib::settings::Settings;
+use selflib::settings::{Settings, ApplicationSettings};
 use selflib::sound::{dac, decode_opus};
 use std::sync::mpsc::channel;
 use std::time::Duration;
@@ -15,7 +15,7 @@ use std::time::Duration;
 fn main (){
     env_logger::init();
 
-    let settings = Settings::get_default_settings();
+    let settings: ApplicationSettings = Settings::get_default_settings();
     let channels = settings.get_channels();
     let (_input_device, output_device) = settings.get_devices();
     let output_device = Arc::new(Mutex::new(output_device));

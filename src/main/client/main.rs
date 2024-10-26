@@ -11,6 +11,7 @@ use ringbuf::{
     traits::{Consumer, Producer, Split, Observer},
     HeapRb,
 };
+use opus::{Encoder, Application};
 use byteorder::{BigEndian, WriteBytesExt};
 #[allow(unused_imports)]
 use log::{debug, info, warn, error};
@@ -18,17 +19,17 @@ use log::{debug, info, warn, error};
 use selflib::{
     utils::{clear_terminal, username_take},
     mdns_service::MdnsService,
-    settings::Settings,
+    settings::{Settings, ApplicationSettings}, 
     sine::Sine,
     sound::encode_opus,
 };
 use colored::*;
 
 fn main () -> Result<(), Box<dyn std::error::Error>> {
-
     env_logger::init();
-
-    let settings = Settings::get_default_settings();
+    println!("Logger initialized");
+    let settings: ApplicationSettings = Settings::get_default_settings();
+    println!("Settings loaded");
     let sample_rate = settings.get_sample_rate();
     let channels = settings.get_channels();
     let buffer_size = settings.get_buffer_size();
@@ -37,7 +38,6 @@ fn main () -> Result<(), Box<dyn std::error::Error>> {
     println!("{}", "Enter Username:".cyan());
     // Add validation process? 
     let instance_name = Arc::new(Mutex::new(username_take()));
-    clear_terminal();
 
     // Gather information from client
     let ip =  local_ip_address::local_ip().unwrap(); 
@@ -66,6 +66,7 @@ fn main () -> Result<(), Box<dyn std::error::Error>> {
         let mut buffer: String = String::new();
         reader.read_line(&mut buffer).unwrap();
         let input = buffer.trim();
+        let opus_channels = if channels == 1 { opus::Channels::Mono } else { opus::Channels::Stereo };
 
         if input == "send" {
             loop {
@@ -82,16 +83,29 @@ fn main () -> Result<(), Box<dyn std::error::Error>> {
 
                 // Encode to Opus
                 println!("{}", "Starting Opus Encoding...".cyan());
-                match encode_opus(input_encoder, output_encoder) {
-                    Ok(_) => {
-                        println!("{}","Opus Encoding started successfully...".green());
+                // let _ = encode_opus(input_encoder, output_encoder);
+                std::thread::spawn(move || {
+                    while let Ok(block) = input_encoder.recv() {
+                        let mut opus_encoder = Encoder::new(
+                            sample_rate as u32, 
+                            opus_channels, 
+                            Application::Audio
+                        ).unwrap();
+                        // Swap active buffers to avoid blocking
+                        // println!("Copied new audio block of size {} into inactive buffer", block.len());
+                        let mut encoded_block = vec![0; buffer_size * channels as usize];
+                        if let Ok(len) = opus_encoder.encode_float(&block, &mut encoded_block){
+                            // println!("Encoded block of size: {}", len);
+                            let encoded_data = encoded_block[..len].to_vec();
+                            // println!("Block: {:?}", encoded_data);
+                            output_encoder.send(encoded_data).expect("Failed to send encoded data");
+                            // println!("Encoded data sent to output channel");
+                        }
                     }
-                    Err(e) => {
-                        println!("{}", "Failed to start Opus encoding".red());
-                        error!("Failed to start Opus encoding: {:?}", e);
-                    }
-                }
+                });
 
+                // It is not arriving here, input buffer is not being printed
+                println!("Input buffer: {:?}", input_buffer);
                 // Initialize Ring Buffer to store encoded_samples
                 let ring = HeapRb::<u8>::new(buffer_size * channels as usize);
                 let (mut producer, mut consumer) = ring.split();
@@ -125,35 +139,34 @@ fn main () -> Result<(), Box<dyn std::error::Error>> {
                 std::thread::spawn(move || {
                     println!("{}", "CLIENT: UDP sender thread started".cyan());
                     let user_table = user_table_clone.lock().unwrap();
+                    let socket = UdpSocket::bind(&ip_port).expect("UDP: Failed to bind to socket");
                     loop {
                         for (user, address) in user_table.clone() {
-                            let socket = UdpSocket::bind(&ip_port).expect("UDP: Failed to bind to socket");
                             let mut buffer: Vec<u8> = vec![0; buffer_size * channels as usize];
                             let size = consumer.pop_slice(&mut buffer);
+                            if size == 0 {
+                                std::thread::sleep(std::time::Duration::from_millis(1)); // Avoid busy waiting
+                                continue;
+                            }
                             let block = &buffer[..size];
                             println!("{}", format!("CLIENT: Popped slice of size: {}", size).cyan());
 
-                            //if address == ip.to_string() {
-                                // println!("{}", format!("CLIENT: Skipping send to local address: {}", address).blue());
-                                //continue;
-                            //} else {
-                                let port = format!("{}:18521", address);
-                                println!("{}", format!("CLIENT: Sending data to {}: {}", user, port).cyan());
+                            let port = format!("{}:18521", address);
+                            println!("{}", format!("CLIENT: Sending data to {}: {}", user, port).cyan());
 
-                                let data_len = block.len() as u32;
-                                let mut packet = Vec::with_capacity(4 + block.len());
+                            let data_len = block.len() as u32;
+                            let mut packet = Vec::with_capacity(4 + block.len());
+                            // Write the length to the header
+                            packet.write_u32::<BigEndian>(data_len).unwrap();
+                            // Append the encoded data to the packet
+                            packet.extend_from_slice(&block);
 
-                                // Write the length to the header
-                                packet.write_u32::<BigEndian>(data_len).unwrap();
+                            // Send the packet
+                            match socket.send_to(&packet, port.clone()) {
+                                Ok(_) => println!("{}", format!("CLIENT: Data sent successfully to {}", port).green()),
+                                Err(e) => println!("{}", format!("CLIENT: Failed to send data to {}: {:?}", port, e).red()),
+                            }
 
-                                // Append the encoded data to the packet
-                                packet.extend_from_slice(&block);
-
-                                // Send the packet
-                                socket.send_to(&packet, port.clone()).expect("CLIENT: Failed to send data");
-
-                                println!("{}", format!("CLIENT: Data sent successfully to {}", port).green());
-                            //}
                         }
                     }
                 });

@@ -9,7 +9,7 @@ use ringbuf::{
 };
 use log::{info, warn, error, debug};
 #[allow(unused_imports)]
-use crate::settings::Settings;
+use crate::settings::{Settings, ApplicationSettings};
 
 
 pub fn dac(
@@ -18,7 +18,7 @@ pub fn dac(
     device: &Arc<Mutex<cpal::Device>>,
     ) { 
 
-    let settings = Settings::get_default_settings();
+    let settings: ApplicationSettings = Settings::get_default_settings();
     let channels = settings.get_channels();
     let (_, config) = settings.get_config_files();
     debug!("DAC: Initialized with Channels: {}, Buffer Size: {}", channels, buffer_size);
@@ -83,33 +83,33 @@ pub fn dac(
     }
 
 }
-pub fn encode_opus(
+pub fn encode_opus_v1(
     receiver: Receiver<Vec<f32>>,
     sender: Sender<Vec<u8>>,
     ) -> Result<(), opus::Error> {
     info!("ENCODER: Encoder started");
 
     // Set settings
-    let settings = Settings::get_default_settings();
+    let settings: ApplicationSettings = Settings::get_default_settings();
     let channels = settings.get_channels();
     let buffer_size = settings.get_buffer_size();
     let sample_rate = settings.get_sample_rate();
-    let specs = format!("ENCODER: CHANNELS: {}, BUFFER_RATE: {}, SAMPLE_RATE: {}", channels, buffer_size, sample_rate);
+    let specs = format!("ENCODER: CHANNELS: {}, BUFFER_RATE: {}, SAMPLE_RATE: {}", 
+        channels, buffer_size, sample_rate);
     println!("{}", &specs);
 
     // Initialize Ring Buffer
     // This ring buffer stores incoming PCM data
     let ring = HeapRb::<f32>::new(buffer_size * channels as usize);
     let (mut producer, mut consumer) = ring.split();
-    let ring_init = format!("ENCODER: Ring Buffer initialized with size: {} bytes", buffer_size * channels as usize);
+    let ring_init = format!("ENCODER: Ring Buffer initialized with size: {} bytes", 
+        buffer_size * channels as usize);
     println!("{}", &ring_init);
 
     std::thread::spawn( move || {
         println!("ENCODER: Spawned producer thread");
         let mut counter = 0;
         while let Ok(block) = receiver.recv() {
-
-            println!("ENCODER: Received a block of size: {}", block.len());
             for sample in block {
                 while producer.is_full() {
                     std::thread::sleep(std::time::Duration::from_millis(1));
@@ -135,8 +135,7 @@ pub fn encode_opus(
         warn!("ENCODER: Channels are more than 2");
     }
 
-    let opus_info = format!("ENCODER: Opus encoder channels set to: {:?}", opus_channels);
-    println!("{}", &opus_info);
+    let _opus_info = format!("ENCODER: Opus encoder channels set to: {:?}", opus_channels);
 
     // Here the Application can be Voip, Audio, LowDelay
     let mut opus_encoder = Encoder::new(sample_rate as u32, opus_channels, Application::Audio)?;
@@ -169,17 +168,48 @@ pub fn encode_opus(
 
         sender.send(encoded_data.clone()).unwrap();
         println!("ENCODER: Encoded block sent through sender channel");
-        return Ok(());
-
     }
 
 }
+
+pub fn encode_opus(
+    receiver: Receiver<Vec<f32>>,
+    sender: Sender<Vec<u8>>,
+) -> Result<(), opus::Error> {
+    let settings: ApplicationSettings = Settings::get_default_settings();
+    let channels = settings.get_channels();
+    let buffer_size = settings.get_buffer_size();
+    let sample_rate = settings.get_sample_rate();
+    let opus_channels = if channels == 1 { opus::Channels::Mono } else { opus::Channels::Stereo };
+
+    // println!("Encoder initialized with sample rate: {}, channels: {}", sample_rate, channels);
+    // Double buffers for storing audio chunks
+    while let Ok(block) = receiver.recv() {
+        let mut opus_encoder = Encoder::new(
+            sample_rate as u32, 
+            opus_channels, 
+            Application::Audio
+            )?;
+        // Swap active buffers to avoid blocking
+        // println!("Copied new audio block of size {} into inactive buffer", block.len());
+        let mut encoded_block = vec![0; buffer_size * channels as usize];
+        if let Ok(len) = opus_encoder.encode_float(&block, &mut encoded_block) {
+            // println!("Encoded block of size: {}", len);
+            let encoded_data = encoded_block[..len].to_vec();
+            // println!("Block: {:?}", encoded_data);
+            sender.send(encoded_data).expect("Failed to send encoded data");
+            // println!("Encoded data sent to output channel");
+        }
+    }
+    Ok(())
+}
+
 pub fn decode_opus(
     receiver: Receiver<Vec<u8>>,
     sender: Sender<Vec<f32>>,
     ) -> Result<Vec<f32>, opus::Error> {
     // Set settings
-    let settings = Settings::get_default_settings();
+    let settings: ApplicationSettings = Settings::get_default_settings();
     let channels = settings.get_channels();
     let buffer_size = settings.get_buffer_size();
     let sample_rate = settings.get_sample_rate();
@@ -237,7 +267,5 @@ pub fn decode_opus(
 
         sender.send(decoded_block[..length].to_vec()).unwrap();
         info!("DECODER: Decoded data sent to next stage");
-
-        return Ok(decoded_block[..length].to_vec());
     }
 }

@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::time::{Duration, Instant};
 use std::sync::mpsc::{Sender, Receiver};
 use cpal::SampleFormat;
 use cpal::traits::{DeviceTrait, StreamTrait};
@@ -40,15 +41,16 @@ impl Sine {
         };
 
         std::thread::spawn( move || {
-            info!("Sine::new - Sine wave generator thread started");
+            // println!("Sine::new - Sine wave generator thread started");
             let mut phase = 0.0 as f32;
             let phase_increment = 2.0 * PI * sine.frequency / sine.sample_rate as f32;
+            let interval = Duration::from_secs_f32(buffer_size as f32 / 
+                sine.sample_rate as f32);
             loop {
+                let start = Instant::now();
                 let block: Vec<f32> = (0..buffer_size)
                     .flat_map(|_| {
                         let sample = (phase).sin() * sine.amplitude;
-
-
                         phase += phase_increment;
                         if phase > 2.0 * PI {
                             phase -= 2.0 * PI;
@@ -62,6 +64,12 @@ impl Sine {
                     warn!("Sine::new - Failed to send block, terminating sine
                     wave generator thread");
                     break;
+                }
+
+                // Calculate elapsed time and wait for the remainder of the interval
+                let elapsed = start.elapsed();
+                if elapsed < interval {
+                    std::thread::sleep(interval - elapsed);
                 }
             }
         });

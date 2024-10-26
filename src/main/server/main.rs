@@ -106,7 +106,6 @@ fn main (){
         }
     });
 
-    // Send this data to a port, have a different Application in Front End.
     loop {
         // Do Something;
         std::thread::sleep(Duration::from_millis(10000));

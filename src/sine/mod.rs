@@ -9,6 +9,8 @@ use ringbuf::{
     HeapRb,
 };
 use log::{info, warn};
+#[allow(unused_imports)]
+use colored::*;
 
 pub struct Sine {
     frequency: f32,
@@ -60,8 +62,11 @@ impl Sine {
                     })
                 .collect();
 
+                //let sine_size = format!("SINE: Size of block: {}", block.len()).yellow();
+                //println!("{sine_size}");
+
                 if output.send(block).is_err(){
-                    warn!("Sine::new - Failed to send block, terminating sine
+                    warn!("SINE: Failed to send block, terminating sine
                     wave generator thread");
                     break;
                 }

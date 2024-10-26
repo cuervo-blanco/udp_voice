@@ -7,6 +7,7 @@ use ringbuf::{
     traits::{Consumer, Producer, Split, Observer}, 
     HeapRb,
 };
+use colored::*;
 use log::{info, warn, error, debug};
 #[allow(unused_imports)]
 use crate::settings::{Settings, ApplicationSettings};
@@ -194,7 +195,8 @@ pub fn encode_opus(
         // println!("Copied new audio block of size {} into inactive buffer", block.len());
         let mut encoded_block = vec![0; buffer_size * channels as usize];
         if let Ok(len) = opus_encoder.encode_float(&block, &mut encoded_block) {
-            // println!("Encoded block of size: {}", len);
+            let data_len = format!("ENCODER: Encoded block of size: {}", len).magenta();
+            println!("{data_len}");
             let encoded_data = encoded_block[..len].to_vec();
             // println!("Block: {:?}", encoded_data);
             sender.send(encoded_data).expect("Failed to send encoded data");

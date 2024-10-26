@@ -95,9 +95,9 @@ fn main (){
             if let Ok(len) = opus_decoder.decode_float(&block, &mut decoded_block, true) {
                 let data_len = format!("ENCODER: Decoded block of size: {}", len).magenta();
                 println!("{data_len}");
-                let encoded_data = decoded_block[..len].to_vec();
-                // println!("Block: {:?}", encoded_data);
-                sender_decoder.send(encoded_data).expect("Failed to send encoded data");
+                let decoded_data = decoded_block[..len].to_vec();
+                println!("Block: {:?}", decoded_data);
+                sender_decoder.send(decoded_data).expect("Failed to send encoded data");
                 // println!("Encoded data sent to output channel");
             }
         }

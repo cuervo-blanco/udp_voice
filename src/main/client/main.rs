@@ -20,7 +20,7 @@ use log::{debug, info, warn, error};
 use selflib::{
     utils::{clear_terminal, username_take},
     mdns_service::MdnsService,
-    settings::{Settings, ApplicationSettings}, 
+    settings::{Settings, ApplicationSettings},
     sine::Sine,
 };
 use colored::*;
@@ -36,19 +36,19 @@ fn main () -> Result<(), Box<dyn std::error::Error>> {
 
     println!("");
     println!("{}", "Enter Username:".cyan());
-    // Add validation process? 
+    // Add validation process?
     let instance_name = Arc::new(Mutex::new(username_take()));
 
     // Gather information from client
-    let ip =  local_ip_address::local_ip().unwrap(); 
-    let _ip_check = format!("UDP: Local IP Address: {}", ip); 
+    let ip =  local_ip_address::local_ip().unwrap();
+    let _ip_check = format!("UDP: Local IP Address: {}", ip);
     println!("");
     let port: u16 = 18522;
 
     // mDNS
     let properties = vec![
-        ("service name", "udp voice"), 
-        ("service type", "_udp_voice._udp_local."), 
+        ("service name", "udp voice"),
+        ("service type", "_udp_voice._udp_local."),
         ("version", "0.0.2"),
         ("interface", "client")
     ];
@@ -69,27 +69,28 @@ fn main () -> Result<(), Box<dyn std::error::Error>> {
         let opus_channels = if channels == 1 { opus::Channels::Mono } else { opus::Channels::Stereo };
 
         if input == "send" {
-            let ip_port = format!("{}:{}", ip, port); 
+            let ip_port = format!("{}:{}", ip, port);
             let ip_check = format!("UDP: IP Address & Port: {}", ip_port).blue();
             println!("{}", &ip_check);
             // The sine's output goes into the encoder's input
             // The encoder's output goes into the buffer's input
             let (output_sine, input_encoder) = channel();
             let (output_encoder, input_buffer) = channel();
+            let (len_out, len_in) = channel();
 
             println!("{}", "Generating Sound Wave...".cyan());
             let _sine = Sine::new(440.0, 1.0, sample_rate as u32, channels as usize, output_sine, buffer_size);
-            
+
             // Encode to Opus
             println!("{}", "Starting Opus Encoding...".cyan());
             // let _ = encode_opus(input_encoder, output_encoder);
             std::thread::spawn(move || {
+                let mut opus_encoder = Encoder::new(
+                    sample_rate as u32,
+                    opus_channels,
+                    Application::Audio
+                ).unwrap();
                 while let Ok(block) = input_encoder.recv() {
-                    let mut opus_encoder = Encoder::new(
-                        sample_rate as u32, 
-                        opus_channels, 
-                        Application::Audio
-                    ).unwrap();
                     opus_encoder.set_bitrate(opus::Bitrate::Bits(64000)).expect("Failed to set bitrate");
                     opus_encoder.set_vbr(false).expect("Failed to set CBR mode");
                     // Swap active buffers to avoid blocking
@@ -101,13 +102,14 @@ fn main () -> Result<(), Box<dyn std::error::Error>> {
                         let encoded_data = encoded_block[..len].to_vec();
                         // println!("{}", format!("Block: {:?}", encoded_data).magenta());
                         output_encoder.send(encoded_data).expect("Failed to send encoded data");
+                        let _ = len_out.send(len);
                         // println!("Encoded data sent to output channel");
                     }
                 }
             });
 
             let user_table_clone = user_table.clone();
-            let mut batch_buffer = vec![0u8; buffer_size * channels as usize];
+            let mut batch_buffer = vec![0u8; len_in.recv().unwrap() * 3];
             let mut offset = 0;
 
             std::thread::spawn(move || {
@@ -145,7 +147,7 @@ fn main () -> Result<(), Box<dyn std::error::Error>> {
         } else {
             println!("{}", "Not a permitted command".red());
             continue;
-        } 
+        }
     }
 
 }

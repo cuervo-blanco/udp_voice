@@ -12,7 +12,6 @@ use std::net::UdpSocket;
 use selflib::settings::{Settings, ApplicationSettings};
 use selflib::sound::dac;
 use std::sync::mpsc::channel;
-use std::time::Duration;
 use colored::*;
 use opus::Decoder;
 
@@ -27,19 +26,19 @@ fn main (){
     let (_input_config, _output_config) = settings.get_config_files();
     let buffer_size = settings.get_buffer_size();
 
-    // System Information 
-    let ip =  local_ip_address::local_ip().unwrap(); 
+    // System Information
+    let ip =  local_ip_address::local_ip().unwrap();
     println!("UDP: Local IP Address: {}", ip);
     let port: u16 = 18521;
-    let ip_port = format!("{}:{}", ip, port); 
+    let ip_port = format!("{}:{}", ip, port);
     println!("UDP: IP Address & Port: {}", ip);
 
     // mDNS
     let service_type = "udp_voice._udp.local.";
 
     let properties = vec![
-        ("service name", "udp voice"), 
-        ("service type", service_type), 
+        ("service name", "udp voice"),
+        ("service type", service_type),
         ("version", "0.0.0"),
         ("interface", "server"),
         // Define more properties relevant to the service, such as Room Name
@@ -59,7 +58,7 @@ fn main (){
     let output_device_copy = output_device.clone();
     let (sender_udp, receiver_audio) = channel();
 
-    std::thread::spawn( move ||{
+    let udp_thread = std::thread::spawn( move ||{
         println!("SERVER: Started UDP receiving thread");
         loop {
             let mut header = [0u8; 4];
@@ -69,9 +68,9 @@ fn main (){
                 let data_len = cursor.read_u32::<BigEndian>().unwrap();
                 let mut encoded_data = vec![0; data_len as usize];
                 if let Ok((amount, _source)) = socket.recv_from(&mut encoded_data) {
-                    // send the block 
+                    // send the block
                     if let Err(e) = sender_udp.send(encoded_data[..amount].to_vec()) {
-                       eprintln!("SERVER: Failed to send data to audio thread: {:?}", e); 
+                       eprintln!("SERVER: Failed to send data to audio thread: {:?}", e);
                     }
                 } else {
                     println!("SERVER: Failed to receive data on UDP socket");
@@ -83,13 +82,13 @@ fn main (){
     });
 
     let (sender_decoder, receiver_dac) = channel();
-    std::thread::spawn(move || {
+    let decode_thread = std::thread::spawn(move || {
         let opus_channels = if channels == 1 { opus::Channels::Mono } else { opus::Channels::Stereo };
         // Double buffers for storing audio chunks
         while let Ok(block) = receiver_audio.recv() {
             let mut opus_decoder = Decoder::new(
-                sample_rate as u32, 
-                opus_channels, 
+                sample_rate as u32,
+                opus_channels,
             ).unwrap();
             let mut decoded_block = vec![0.0; buffer_size * channels as usize];
             if let Ok(len) = opus_decoder.decode_float(&block, &mut decoded_block, true) {
@@ -102,15 +101,15 @@ fn main (){
             }
         }
     });
-    std::thread::spawn(move || {
+    let dac_thread = std::thread::spawn(move || {
         println!("SERVER: Opus decoding completed, sending to DAC");
         dac(receiver_dac, buffer_size, &output_device_copy);
         println!("SERVER: Audio sent to DAC");
     });
 
-    loop {
-        // Do Something;
-        std::thread::sleep(Duration::from_millis(10000));
-    }
+    let _ = udp_thread.join();
+    let _ = decode_thread.join();
+    let _ = dac_thread.join();
+
 
 }

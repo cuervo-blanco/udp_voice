@@ -93,11 +93,11 @@ fn main (){
             opus_channels,
         ).unwrap();
 
-
         while let Ok(packet) = receiver_audio.recv() {
-
+            println!("Packet to encode: {:?}", packet);
             let frame_size = 160;
             let num_frames = packet.len() as usize / frame_size;
+            println!("Num of Frames: {}", num_frames);
             for i in 0..num_frames {
                 let frame_start = i * frame_size;
                 let frame_end = frame_start + frame_size;

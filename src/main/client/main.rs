@@ -110,6 +110,7 @@ fn main () -> Result<(), Box<dyn std::error::Error>> {
 
             let user_table_clone = user_table.clone();
             let mut batch_buffer = vec![0u8; len_in.recv().unwrap() * 3];
+            println!("BATCH SIZE: {}", batch_buffer.len());
             let mut offset = 0;
 
             std::thread::spawn(move || {

@@ -136,6 +136,7 @@ fn main () -> Result<(), Box<dyn std::error::Error>> {
                                     // println!("{}", format!("Packet: {:?}", packet).yellow());
                                     // println!("Packet length: {:?}", packet.len());
                                     socket.send_to(&packet, &port).expect("Failed to send data");
+                                    println!("Sent packet of size: {}", packet.len());
                                 }
                                 offset = 0;  // Reset offset after sending
                             }

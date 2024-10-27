@@ -1,10 +1,11 @@
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{Sender, Receiver};
 use opus::{Encoder, Decoder, Application};
 use cpal::SampleFormat;
 use cpal::traits::{DeviceTrait, StreamTrait};
 use ringbuf::{
-    traits::{Consumer, Producer, Split, Observer}, 
+    traits::{Consumer, Producer, Split, Observer},
     HeapRb,
 };
 use colored::*;
@@ -12,52 +13,46 @@ use log::{info, warn, error, debug};
 #[allow(unused_imports)]
 use crate::settings::{Settings, ApplicationSettings};
 
-
 pub fn dac(
     receiver: Receiver<Vec<f32>>,
     buffer_size: usize,
     device: &Arc<Mutex<cpal::Device>>,
-    ) { 
+    ) {
 
     let settings: ApplicationSettings = Settings::get_default_settings();
     let channels = settings.get_channels();
     let (_, config) = settings.get_config_files();
     debug!("DAC: Initialized with Channels: {}, Buffer Size: {}", channels, buffer_size);
 
-    // Receives decoded audio it is not a decoder
-    let ring = HeapRb::<f32>::new(buffer_size * channels as usize);
-    let (mut producer, mut consumer) = ring.split();
-    debug!("DAC: Initialized ring buffer with size: {}", buffer_size * channels as usize);
+    let buffer = Arc::new(Mutex::new(VecDeque::with_capacity(buffer_size * channels as usize)));
 
+    let buffer_buffer = Arc::clone(&buffer);
     std::thread::spawn(move || {
-        info!("DAC: Started producer thread for DAC");
         while let Ok(block) = receiver.recv() {
-            debug!("DAC: Received block of size: {}", block.len());
+            let mut buffer = buffer_buffer.lock().expect("Failed to lock buffer for producer");
             for sample in block {
-                while producer.is_full() {
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
-                producer.try_push(sample).expect("Failed to push into producer");
+                buffer.push_back(sample);
             }
-            info!("DAC: Block successfully pushed to producer");
         }
-        info!("DAC: Receiver channel closed, producer thread exiting");
     });
-
     let sample_format = config.sample_format();
     let config: cpal::StreamConfig = config.into();
 
     let device = device.lock().unwrap();
     info!("DAC: Output device locked and ready");
 
+    let buffer_for_playback = Arc::clone(&buffer);
+
     let stream = match sample_format {
-        SampleFormat::F32 => { 
+        SampleFormat::F32 => {
             info!("DAC: Building output stream with format F32");
             device.build_output_stream(
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                for sample in data {
-                    *sample = consumer.try_pop().unwrap_or(0.0);
+                let mut buffer = buffer_for_playback.lock().expect("Failed to lock buffer for consumer");
+                for sample in data.iter_mut() {
+                    println!("Sample: {sample}");
+                    *sample = buffer.pop_front().unwrap_or(0.0);
                 }
             },
             move |err| {
@@ -95,7 +90,7 @@ pub fn encode_opus_v1(
     let channels = settings.get_channels();
     let buffer_size = settings.get_buffer_size();
     let sample_rate = settings.get_sample_rate();
-    let specs = format!("ENCODER: CHANNELS: {}, BUFFER_RATE: {}, SAMPLE_RATE: {}", 
+    let specs = format!("ENCODER: CHANNELS: {}, BUFFER_RATE: {}, SAMPLE_RATE: {}",
         channels, buffer_size, sample_rate);
     println!("{}", &specs);
 
@@ -103,7 +98,7 @@ pub fn encode_opus_v1(
     // This ring buffer stores incoming PCM data
     let ring = HeapRb::<f32>::new(buffer_size * channels as usize);
     let (mut producer, mut consumer) = ring.split();
-    let ring_init = format!("ENCODER: Ring Buffer initialized with size: {} bytes", 
+    let ring_init = format!("ENCODER: Ring Buffer initialized with size: {} bytes",
         buffer_size * channels as usize);
     println!("{}", &ring_init);
 
@@ -161,7 +156,7 @@ pub fn encode_opus_v1(
             }
         }
         println!("ENCODER: Filled decoded block buffer");
-        
+
         let mut encoded_block = vec![0; buffer_size * channels as usize];
         let len = opus_encoder.encode_float(&decoded_block, &mut encoded_block)?;
         let encoded_data = encoded_block[..len].to_vec();
@@ -187,8 +182,8 @@ pub fn encode_opus(
     // Double buffers for storing audio chunks
     while let Ok(block) = receiver.recv() {
         let mut opus_encoder = Encoder::new(
-            sample_rate as u32, 
-            opus_channels, 
+            sample_rate as u32,
+            opus_channels,
             Application::Audio
             )?;
         // Swap active buffers to avoid blocking
@@ -221,8 +216,8 @@ pub fn de_encode_opus(
     // Double buffers for storing audio chunks
     while let Ok(block) = receiver.recv() {
         let mut opus_decoder = Decoder::new(
-            sample_rate as u32, 
-            opus_channels, 
+            sample_rate as u32,
+            opus_channels,
             )?;
         // Swap active buffers to avoid blocking
         // println!("Copied new audio block of size {} into inactive buffer", block.len());

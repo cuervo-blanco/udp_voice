@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+use cpal::traits::{DeviceTrait, StreamTrait};
 use std::io::Cursor;
 use byteorder::{BigEndian, ReadBytesExt};
 use std::sync::{Arc, Mutex};
@@ -10,10 +12,13 @@ use selflib::mdns_service::MdnsService;
 use log::{debug, info, warn, error};
 use std::net::UdpSocket;
 use selflib::settings::{Settings, ApplicationSettings};
+#[allow(unused_imports)]
 use selflib::sound::dac;
 use std::sync::mpsc::channel;
+#[allow(unused_imports)]
 use colored::*;
 use opus::Decoder;
+use cpal::SampleFormat;
 
 fn main (){
     env_logger::init();
@@ -54,7 +59,6 @@ fn main (){
     let socket = UdpSocket::bind(ip_port).expect("UDP: Failed to bind socket");
     println!("SERVER: UDP socket bound successfully");
 
-    let output_device_copy = output_device.clone();
     let (sender_udp, receiver_audio) = channel();
 
     let udp_thread = std::thread::spawn( move ||{
@@ -65,12 +69,15 @@ fn main (){
             if let Ok((_,_source)) = socket.recv_from(&mut header) {
                 let mut cursor = Cursor::new(&header);
                 let data_len = cursor.read_u32::<BigEndian>().unwrap();
+                //println!("Data len: {data_len}");
 
                 let mut encoded_data = vec![0; data_len as usize];
                 if let Ok((amount, _source)) = socket.recv_from(&mut encoded_data) {
                     // send the block
                     // println!("Encoded data: {:?}", encoded_data);
-                    if let Err(e) = sender_udp.send(encoded_data[..amount].to_vec()) {
+                    let audio_data = encoded_data[4..amount].to_vec();
+                    println!("Received data: {}", audio_data.len());
+                    if let Err(e) = sender_udp.send(audio_data) {
                        eprintln!("SERVER: Failed to send data to audio thread: {:?}", e);
                     }
                 } else {
@@ -94,20 +101,25 @@ fn main (){
         ).unwrap();
 
         while let Ok(packet) = receiver_audio.recv() {
-            println!("Packet to encode: {:?}", packet);
+            // println!("Packet to decode: {:?}", packet);
+            //println!("Packet Size: {}", packet.len());
             let frame_size = 160;
             let num_frames = packet.len() as usize / frame_size;
-            println!("Num of Frames: {}", num_frames);
             for i in 0..num_frames {
                 let frame_start = i * frame_size;
+                //println!("FRAME {} Start: {}", i + 1, frame_start);
                 let frame_end = frame_start + frame_size;
+                //println!("FRAME {} End: {}", i + 1, frame_end);
 
                 if frame_end <= packet.len() {
                     let frame = &packet[frame_start..frame_end];
+                    //println!("FRAME {} Size: {:?}", i + 1,  frame.len());
+                    //println!("FRAME {}: {:?}", i + 1, frame);
                     let mut decoded_frame = vec![0.0; buffer_size * channels as usize];
-                    match opus_decoder.decode_float(frame, &mut decoded_frame, true) {
+                    match opus_decoder.decode_float(frame, &mut decoded_frame, false) {
                         Ok(len) => {
                             let decoded_data = decoded_frame[..len].to_vec();
+                            //println!("{}", format!("DECODED FRAME {}: {:?}", i+1, decoded_data).yellow());
                             println!("{}", format!("Decoded block of size: {}", len).magenta());
                             sender_decoder.send(decoded_data).expect("Failed to send decoded data");
                         }
@@ -124,8 +136,79 @@ fn main (){
 
     let dac_thread = std::thread::spawn(move || {
         println!("SERVER: Opus decoding completed, sending to DAC");
-        dac(receiver_dac, buffer_size, &output_device_copy);
-        println!("SERVER: Audio sent to DAC");
+        let settings: ApplicationSettings = Settings::get_default_settings();
+        let channels = settings.get_channels();
+        let (_, config) = settings.get_config_files();
+        let sample_format = config.sample_format();
+        let config: cpal::StreamConfig = config.into();
+        let config_channels = config.channels as usize;
+        let expected_data_len = buffer_size * config_channels;
+
+        println!("Expected data length per callback: {}", expected_data_len);
+
+        debug!("DAC: Initialized with Channels: {}, Buffer Size: {}", channels, buffer_size);
+
+        let buffer = Arc::new(Mutex::new(VecDeque::with_capacity(buffer_size * channels as usize)));
+
+        {
+            let buffer = Arc::clone(&buffer);
+            std::thread::spawn(move || {
+                while let Ok(block) = receiver_dac.recv() {
+                    println!("Buffer block received length: {}", block.len());
+                    let mut buffer = buffer.lock().expect("Failed to lock buffer for producer");
+                    buffer.extend(block);
+                    println!("Buffer to send to callback: {}", buffer.len());
+                }
+            });
+        }
+
+        let device = output_device.lock().unwrap();
+        info!("DAC: Output device locked and ready");
+
+        let buffer_for_playback = Arc::clone(&buffer);
+
+        let stream = match sample_format {
+            SampleFormat::F32 => {
+                device.build_output_stream(
+                &config,
+                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    let mut buffer = buffer_for_playback.lock().expect("Failed to lock buffer for playback");
+
+                    let available_samples = buffer.len();
+                    let requested_samples = data.len();
+                    println!("Buffer: {:?}", available_samples);
+                    println!("Data: {:?}", requested_samples);
+                    for i in 0..requested_samples {
+                        data[i] = if i < available_samples {
+                            buffer.pop_front().unwrap()
+                        } else {
+                                0.0
+                        };
+                    }
+                },
+                move |err| {
+                    println!("DAC: Failed to output samples into stream: {}", err);
+                },
+                None //None=blocking, Some(Duration)=timeout
+            )},
+            SampleFormat::I16 => {
+                println!("DAC: Not yet implemented(I16)");
+                todo!();
+            },
+            SampleFormat::U16 => {
+                println!("DAC: Not yet implemented (U16)");
+                todo!();
+            }
+            sample_format => panic!("DAC: Unsupported sample format '{sample_format}'")
+        }.unwrap();
+
+        //println!("DAC: Starting the audio stream");
+        stream.play().expect("Failed to play stream");
+        println!("Stream is playing");
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+
     });
 
     let _ = udp_thread.join();

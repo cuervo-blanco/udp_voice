@@ -31,6 +31,7 @@ fn main (){
     let output_device = Arc::new(Mutex::new(output_device));
     let (_input_config, output_config) = settings.get_config_files();
     let buffer_size = settings.get_buffer_size();
+    println!("Buffer size: {}", buffer_size);
     let sample_format = output_config.sample_format();
 
     // System Information
@@ -79,11 +80,17 @@ fn main (){
                     if amount != data_len as usize {
                         eprint!("{}", format!("Warning: Expected {} bytes but received {}", data_len, amount).red());
                     }
-                    let audio_data = if amount > 4 {
+                    let mut audio_data = if amount > 4 {
                         encoded_data[4..amount].to_vec()
                     } else {
                         vec![0; amount]
                     };
+
+                    if audio_data.len() < data_len as usize {
+                        let padding_needed = data_len as usize - audio_data.len();
+                        audio_data.extend(vec![0; padding_needed]);
+                        println!("Padded audio data to lenght: {}", audio_data.len());
+                    }
                     println!("UDP: Received data (without header): {}", audio_data.len());
                     if let Err(e) = sender_udp.send(audio_data) {
                        eprintln!("SERVER: Failed to send data to audio thread: {:?}", e);
@@ -107,6 +114,8 @@ fn main (){
             sample_rate as u32,
             opus_channels,
         ).unwrap();
+        let accum_size = 1920;
+        let mut accumulated_samples: Vec<f32> = Vec::with_capacity(accum_size);
 
         while let Ok(packet) = receiver_audio.recv() {
             // println!("Packet to decode: {:?}", packet);
@@ -128,9 +137,13 @@ fn main (){
                     match opus_decoder.decode_float(frame, &mut decoded_frame, false) {
                         Ok(len) => {
                             let decoded_data = decoded_frame[..len].to_vec();
+                            accumulated_samples.extend_from_slice(&decoded_data);
                             //println!("{}", format!("DECODED FRAME {}: {:?}", i+1, decoded_data).yellow());
                             println!("{}", format!("DECODER: Decoded block of size: {}", len).magenta());
-                            sender_decoder.send(decoded_data).expect("Failed to send decoded data");
+                            if accumulated_samples.len() >= accum_size {
+                                let buffer_chunk = accumulated_samples.drain(..accum_size).collect::<Vec<f32>>();
+                                sender_decoder.send(buffer_chunk).expect("Failed to send decoded data");
+                            }
                         }
                         Err(e) => {
                             eprintln!("Decoding error: {:?}", e);
@@ -143,45 +156,63 @@ fn main (){
         }
     });
 
+    let magic_number = 1920;
+
+    let delay_buffer_size = magic_number * 50;
+    let delay_buffer: Arc<Mutex<VecDeque<f32>>> = Arc::new(Mutex::new(VecDeque::with_capacity(delay_buffer_size)));
+
+    let delay_buffer_producer = Arc::clone(&delay_buffer);
+    let producer_thread = std::thread::spawn(move || {
+        while let Ok(block) = receiver_dac.recv() {
+            let mut buffer = delay_buffer_producer.lock()
+                .expect("Failed to lock delay buffer for producer");
+            buffer.extend(block);
+            while buffer.len() > delay_buffer_size {
+                buffer.drain(..magic_number);
+            }
+        }
+    });
+
+    let playback_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(buffer_size * channels as usize)));
+    let delay_buffer_consumer = Arc::clone(&delay_buffer);
+    let playback_buffer_producer = Arc::clone(&playback_buffer);
+    let transfer_thread = std::thread::spawn(move || {
+        loop {
+            let buffer = delay_buffer_consumer.lock()
+                .expect("Failed to acquire lock for delay buffer consumer");
+            if buffer.len() >= delay_buffer_size {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        loop {
+            let mut delay_buf = delay_buffer_consumer.lock()
+                .expect("Failed to acquire lock for delay buffer consumer");
+            let mut playback_buf = playback_buffer_producer.lock()
+                .expect("Failed to acquire lock for playback buffer");
+
+            if playback_buf.len() + magic_number <= buffer_size * 2 && delay_buf.len() >= magic_number {
+                playback_buf.extend(delay_buf.drain(..magic_number));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    });
+
     let dac_thread = std::thread::spawn(move || {
         //println!("SERVER: Opus decoding completed, sending to DAC");
-        let config: cpal::StreamConfig = output_config.into();
-        let config_channels = config.channels as usize;
-        let expected_data_len = buffer_size * config_channels;
-
-        println!("Expected data length per callback: {}", expected_data_len);
-
-        debug!("DAC: Initialized with Channels: {}, Buffer Size: {}", channels, buffer_size);
-
-        let buffer = Arc::new(Mutex::new(VecDeque::with_capacity(buffer_size * channels as usize)));
-
-        {
-            let buffer = Arc::clone(&buffer);
-            std::thread::spawn(move || {
-                while let Ok(block) = receiver_dac.recv() {
-                    println!("BUFFER: Buffer block received length: {}", block.len());
-                    let mut buffer = buffer.lock().expect("Failed to lock buffer for producer");
-                    println!("BUFFER: Initial Size: {}", buffer.len());
-                    if buffer.len() + block.len() > buffer_size * 4 {
-                        buffer.drain(..block.len());
-                    }
-                    buffer.extend(block);
-                    println!("BUFFER: Buffer to send to callback: {}", buffer.len());
-                }
-            });
-        }
+        let stream_config = settings.create_stream_config();
+        let config_channels = stream_config.channels as usize;
+        let _expected_data_len = buffer_size * config_channels;
 
         let device = output_device.lock().unwrap();
         info!("DAC: Output device locked and ready");
 
-        let buffer_for_playback = Arc::clone(&buffer);
-
         let stream = match sample_format {
             SampleFormat::F32 => {
                 device.build_output_stream(
-                &config,
+                &stream_config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    let mut buffer = buffer_for_playback.lock().expect("Failed to lock buffer for playback");
+                    let mut buffer = playback_buffer.lock().expect("Failed to lock buffer for playback");
                         let available_samples = buffer.len();
                         let requested_samples = data.len();
                         println!("CALLBACK: Buffer: {:?}", available_samples);
@@ -230,4 +261,6 @@ fn main (){
     let _ = udp_thread.join();
     let _ = decode_thread.join();
     let _ = dac_thread.join();
+    let _ = producer_thread.join();
+    let _ = transfer_thread.join();
 }

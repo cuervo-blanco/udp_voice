@@ -20,7 +20,7 @@ impl Settings for ApplicationSettings {
     fn get_default_settings() -> Self {
         let host = cpal::default_host();
         let (input_device, output_device) = (
-            host.default_input_device().unwrap(), 
+            host.default_input_device().unwrap(),
             host.default_output_device().unwrap(),
             );
 
@@ -34,18 +34,29 @@ impl Settings for ApplicationSettings {
             .sample_rate();
         let channels = output_config
             .channels();
+         let default_buffer_size = 960;
+         let buffer_size = match output_config.buffer_size() {
+            cpal::SupportedBufferSize::Range { min, max } => {
+                if default_buffer_size >= *min as usize && default_buffer_size <= *max as usize {
+                    default_buffer_size
+                } else {
+                    *max as usize
+                }
+             }
+            cpal::SupportedBufferSize::Unknown => default_buffer_size,
+        };
 
 
         let settings = Self {
             host,
             devices: (input_device, output_device),
             config_files: (
-                input_config, 
+                input_config,
                 output_config,
                 ),
             sample_rate: cpal::SampleRate(48000),
             channels,
-            buffer_size: 960 as usize,
+            buffer_size,
         };
 
         settings
@@ -54,7 +65,7 @@ impl Settings for ApplicationSettings {
 
 impl ApplicationSettings {
 
-    // Get functions: 
+    // Get functions:
     pub fn get_buffer_size(&self) -> usize {
         self.buffer_size
     }
@@ -68,12 +79,19 @@ impl ApplicationSettings {
         self.channels
     }
     pub fn get_config_files(&self) -> (
-        cpal::SupportedStreamConfig, 
+        cpal::SupportedStreamConfig,
         cpal::SupportedStreamConfig
         ) {
         self.config_files.clone()
     }
-        
+    pub fn create_stream_config(&self) -> cpal::StreamConfig {
+        cpal::StreamConfig {
+            channels: self.channels,
+            sample_rate: self.sample_rate,
+            buffer_size: cpal::BufferSize::Fixed(self.buffer_size as u32),
+        }
+    }
+
     // Set Functions
     pub fn set_output_device(self) {
         todo!()

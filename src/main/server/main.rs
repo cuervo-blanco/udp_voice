@@ -26,10 +26,12 @@ fn main (){
     let settings: ApplicationSettings = Settings::get_default_settings();
     let channels = settings.get_channels();
     let sample_rate = settings.get_sample_rate();
+    println!("Sample Rate: {:?}", sample_rate);
     let (_input_device, output_device) = settings.get_devices();
     let output_device = Arc::new(Mutex::new(output_device));
-    let (_input_config, _output_config) = settings.get_config_files();
+    let (_input_config, output_config) = settings.get_config_files();
     let buffer_size = settings.get_buffer_size();
+    let sample_format = output_config.sample_format();
 
     // System Information
     let ip =  local_ip_address::local_ip().unwrap();
@@ -69,14 +71,20 @@ fn main (){
             if let Ok((_,_source)) = socket.recv_from(&mut header) {
                 let mut cursor = Cursor::new(&header);
                 let data_len = cursor.read_u32::<BigEndian>().unwrap();
-                //println!("Data len: {data_len}");
+                println!("Data len (from header): {data_len}");
 
                 let mut encoded_data = vec![0; data_len as usize];
                 if let Ok((amount, _source)) = socket.recv_from(&mut encoded_data) {
-                    // send the block
-                    // println!("Encoded data: {:?}", encoded_data);
-                    let audio_data = encoded_data[4..amount].to_vec();
-                    println!("Received data: {}", audio_data.len());
+                    println!("UDP: Received data (with header): {}", amount);
+                    if amount != data_len as usize {
+                        eprint!("{}", format!("Warning: Expected {} bytes but received {}", data_len, amount).red());
+                    }
+                    let audio_data = if amount > 4 {
+                        encoded_data[4..amount].to_vec()
+                    } else {
+                        vec![0; amount]
+                    };
+                    println!("UDP: Received data (without header): {}", audio_data.len());
                     if let Err(e) = sender_udp.send(audio_data) {
                        eprintln!("SERVER: Failed to send data to audio thread: {:?}", e);
                     }
@@ -104,7 +112,8 @@ fn main (){
             // println!("Packet to decode: {:?}", packet);
             //println!("Packet Size: {}", packet.len());
             let frame_size = 160;
-            let num_frames = packet.len() as usize / frame_size;
+            let num_frames = (packet.len() + frame_size - 1) / frame_size;
+            println!("Number of frames : {}", num_frames);
             for i in 0..num_frames {
                 let frame_start = i * frame_size;
                 //println!("FRAME {} Start: {}", i + 1, frame_start);
@@ -113,14 +122,14 @@ fn main (){
 
                 if frame_end <= packet.len() {
                     let frame = &packet[frame_start..frame_end];
-                    //println!("FRAME {} Size: {:?}", i + 1,  frame.len());
+                    println!("DECODER: FRAME {} Size: {:?}", i + 1,  frame.len());
                     //println!("FRAME {}: {:?}", i + 1, frame);
                     let mut decoded_frame = vec![0.0; buffer_size * channels as usize];
                     match opus_decoder.decode_float(frame, &mut decoded_frame, false) {
                         Ok(len) => {
                             let decoded_data = decoded_frame[..len].to_vec();
                             //println!("{}", format!("DECODED FRAME {}: {:?}", i+1, decoded_data).yellow());
-                            println!("{}", format!("Decoded block of size: {}", len).magenta());
+                            println!("{}", format!("DECODER: Decoded block of size: {}", len).magenta());
                             sender_decoder.send(decoded_data).expect("Failed to send decoded data");
                         }
                         Err(e) => {
@@ -135,12 +144,8 @@ fn main (){
     });
 
     let dac_thread = std::thread::spawn(move || {
-        println!("SERVER: Opus decoding completed, sending to DAC");
-        let settings: ApplicationSettings = Settings::get_default_settings();
-        let channels = settings.get_channels();
-        let (_, config) = settings.get_config_files();
-        let sample_format = config.sample_format();
-        let config: cpal::StreamConfig = config.into();
+        //println!("SERVER: Opus decoding completed, sending to DAC");
+        let config: cpal::StreamConfig = output_config.into();
         let config_channels = config.channels as usize;
         let expected_data_len = buffer_size * config_channels;
 
@@ -154,10 +159,14 @@ fn main (){
             let buffer = Arc::clone(&buffer);
             std::thread::spawn(move || {
                 while let Ok(block) = receiver_dac.recv() {
-                    println!("Buffer block received length: {}", block.len());
+                    println!("BUFFER: Buffer block received length: {}", block.len());
                     let mut buffer = buffer.lock().expect("Failed to lock buffer for producer");
+                    println!("BUFFER: Initial Size: {}", buffer.len());
+                    if buffer.len() + block.len() > buffer_size * 4 {
+                        buffer.drain(..block.len());
+                    }
                     buffer.extend(block);
-                    println!("Buffer to send to callback: {}", buffer.len());
+                    println!("BUFFER: Buffer to send to callback: {}", buffer.len());
                 }
             });
         }
@@ -173,18 +182,25 @@ fn main (){
                 &config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     let mut buffer = buffer_for_playback.lock().expect("Failed to lock buffer for playback");
+                        let available_samples = buffer.len();
+                        let requested_samples = data.len();
+                        println!("CALLBACK: Buffer: {:?}", available_samples);
+                        println!("CALLBACK: Data: {:?}", requested_samples);
 
-                    let available_samples = buffer.len();
-                    let requested_samples = data.len();
-                    println!("Buffer: {:?}", available_samples);
-                    println!("Data: {:?}", requested_samples);
-                    for i in 0..requested_samples {
-                        data[i] = if i < available_samples {
-                            buffer.pop_front().unwrap()
-                        } else {
-                                0.0
-                        };
+                    if buffer.len() >= data.len() {
+                        for i in 0..requested_samples {
+                            data[i] = if i < available_samples {
+                                buffer.pop_front().unwrap()
+                            } else {
+                                    0.0
+                                };
+                        }
+                    } else {
+                        for sample in data.iter_mut() {
+                            *sample = 0.0;
+                        }
                     }
+
                 },
                 move |err| {
                     println!("DAC: Failed to output samples into stream: {}", err);

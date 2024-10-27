@@ -156,9 +156,9 @@ fn main (){
         }
     });
 
-    let magic_number = 1920;
+    let _magic_number = 1920;
 
-    let delay_buffer_size = magic_number * 50;
+    let delay_buffer_size = buffer_size * 50;
     let delay_buffer: Arc<Mutex<VecDeque<f32>>> = Arc::new(Mutex::new(VecDeque::with_capacity(delay_buffer_size)));
 
     let delay_buffer_producer = Arc::clone(&delay_buffer);
@@ -168,36 +168,12 @@ fn main (){
                 .expect("Failed to lock delay buffer for producer");
             buffer.extend(block);
             while buffer.len() > delay_buffer_size {
-                buffer.drain(..magic_number);
+                buffer.drain(..buffer_size);
             }
         }
     });
 
-    let playback_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(buffer_size * channels as usize)));
-    let delay_buffer_consumer = Arc::clone(&delay_buffer);
-    let playback_buffer_producer = Arc::clone(&playback_buffer);
-    let transfer_thread = std::thread::spawn(move || {
-        loop {
-            let buffer = delay_buffer_consumer.lock()
-                .expect("Failed to acquire lock for delay buffer consumer");
-            if buffer.len() >= delay_buffer_size {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        loop {
-            let mut delay_buf = delay_buffer_consumer.lock()
-                .expect("Failed to acquire lock for delay buffer consumer");
-            let mut playback_buf = playback_buffer_producer.lock()
-                .expect("Failed to acquire lock for playback buffer");
-
-            if playback_buf.len() + magic_number <= buffer_size * 2 && delay_buf.len() >= magic_number {
-                playback_buf.extend(delay_buf.drain(..magic_number));
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-    });
-
+    let playback_buffer = Arc::clone(&delay_buffer);
     let dac_thread = std::thread::spawn(move || {
         //println!("SERVER: Opus decoding completed, sending to DAC");
         let stream_config = settings.create_stream_config();
@@ -205,32 +181,39 @@ fn main (){
         let _expected_data_len = buffer_size * config_channels;
 
         let device = output_device.lock().unwrap();
-        info!("DAC: Output device locked and ready");
+
+        loop {
+            {
+                let buffer = playback_buffer.lock()
+                    .expect("Failed to acquire playback buffer lock");
+                if buffer.len() >= delay_buffer_size * 3 / 4 {
+                    println!("Starting playback with buffer size: {}", buffer.len());
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
 
         let stream = match sample_format {
             SampleFormat::F32 => {
                 device.build_output_stream(
-                &stream_config,
-                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    let mut buffer = playback_buffer.lock().expect("Failed to lock buffer for playback");
-                        let available_samples = buffer.len();
+                    &stream_config,
+                    move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                        let mut buffer = playback_buffer.lock().expect("Failed to lock buffer for playback");
+                        // let available_samples = buffer.len();
                         let requested_samples = data.len();
-                        println!("CALLBACK: Buffer: {:?}", available_samples);
-                        println!("CALLBACK: Data: {:?}", requested_samples);
+                        println!("CALLBACK: Samples read (data): {:?}", requested_samples);
 
-                    if buffer.len() >= data.len() {
-                        for i in 0..requested_samples {
-                            data[i] = if i < available_samples {
-                                buffer.pop_front().unwrap()
-                            } else {
-                                    0.0
-                                };
+                        if buffer.len() >= data.len() {
+                            for sample in data.iter_mut() {
+                                *sample = buffer.pop_front().unwrap_or(0.0);
+                            }
+                        } else {
+                            for sample in data.iter_mut() {
+                                *sample = 0.0;
+                            }
                         }
-                    } else {
-                        for sample in data.iter_mut() {
-                            *sample = 0.0;
-                        }
-                    }
+                        println!("CALLBACK: Reamining buffer size after filling data: {}", buffer.len());
 
                 },
                 move |err| {
@@ -262,5 +245,4 @@ fn main (){
     let _ = decode_thread.join();
     let _ = dac_thread.join();
     let _ = producer_thread.join();
-    let _ = transfer_thread.join();
 }

@@ -4,7 +4,7 @@ use cpal::{
     traits::{DeviceTrait, StreamTrait},
 };
 #[allow(unused_imports)]
-use byteorder::{BigEndian, ReadBytesExt};
+use byteorder::{BigEndian, ReadBytesExt, ByteOrder};
 use selflib::mdns_service::MdnsService;
 #[allow(unused_imports)]
 use log::{debug, info, warn, error};
@@ -12,7 +12,7 @@ use selflib::settings::{Settings, ApplicationSettings};
 #[allow(unused_imports)]
 use std::{
     collections::{VecDeque, BTreeMap},
-    io::Cursor,
+    io::{Cursor, Read},
     net::{UdpSocket, IpAddr},
     sync::{
         Arc,
@@ -29,11 +29,19 @@ use opus::Decoder;
 use cpal::SampleFormat;
 
 #[allow(dead_code)]
+#[derive(Debug)]
 struct PacketData {
-    timestamp: Instant,
     sequence_number: u32,
+    frame_size: u32,
     payload: Vec<u8>
 }
+
+const DATA_LEN_SIZE: usize = 4;
+const SEQUENCE_NUM_SIZE: usize = 8;
+const TIMESTAMP_SIZE: usize = 20;
+const HEADER_SIZE: usize = DATA_LEN_SIZE + SEQUENCE_NUM_SIZE + TIMESTAMP_SIZE;
+const PAYLOAD_SIZE: usize = 160 * 20;
+const MAX_PACKET_SIZE: usize = HEADER_SIZE + PAYLOAD_SIZE;
 
 fn main (){
     env_logger::init();
@@ -66,7 +74,7 @@ fn main (){
     let playback_buffer = Arc::clone(&delay_buffer);
 
     // UDP Thread
-    let udp_thread = start_udp_thread(socket, sender_udp, buffer_size);
+    let udp_thread = start_udp_thread(socket, sender_udp, buffer_size * 20);
 
     // Decoder Thread
     let decoder_thread = start_decoder_thread(
@@ -120,50 +128,83 @@ fn setup_mdns(ip: IpAddr, port: u16) -> MdnsService {
     mdns.browse_services();
     mdns
 }
-fn start_udp_thread(socket: UdpSocket, sender_udp: Sender<Vec<u8>>, buffer_size: usize) -> JoinHandle<()> {
+fn start_udp_thread(socket: UdpSocket, sender_udp: Sender<(Vec<u8>, u32)>, min_buffer_fill: usize) -> JoinHandle<()> {
+    // [Data Length (4 bytes)] + [Sequence Number (8 bytes)] + [Timestamp (20 bytes)] + [Payload (variable length)]
     let jitter_buffer: Arc<Mutex<BTreeMap<u32, PacketData>>> = Arc::new(Mutex::new(BTreeMap::new()));
-    let jitter_buffer_clone = jitter_buffer.clone();
     std::thread::spawn(move || {
         let mut prev_packet_time: Option<Instant> = None;
         loop {
-            let mut header = [0u8; 4];
-            if socket.recv_from(&mut header).is_ok() {
-                let data_len = Cursor::new(&header).read_u32::<BigEndian>().unwrap();
-                let mut packet_data = vec![0; 10 + 12 + data_len as usize];
-                let total_packet_len = 10 + 12 + data_len as usize;
-
+            let mut buf = [0u8; MAX_PACKET_SIZE];
+            while let Ok((amount, _src)) = socket.recv_from(&mut buf) {
                 let current_packet_time = Instant::now();
                 if let Some(prev_time) = prev_packet_time {
-                    println!(
-                        "Time since last packet: {:.3} ms",
-                        current_packet_time.duration_since(prev_time).as_secs_f64() * 1000.0
-                    );
+                println!(
+                    "Time since last packet: {:.3} ms",
+                    current_packet_time.duration_since(prev_time).as_secs_f64() * 1000.0);
                 }
                 prev_packet_time = Some(current_packet_time);
-
-                if let Ok((amount, _)) = socket.recv_from(&mut packet_data) {
-                    if amount < total_packet_len {
-                        eprintln!("Received incomplete packet");
+                let mut cursor = Cursor::new(&buf[0..amount]);
+                let packet_len = match cursor.read_u32::<BigEndian>() {
+                    Ok(len) => len,
+                    Err(e) => {
+                        eprintln!("Error reading packet length: {:?}", e);
                         continue;
                     }
-                    let sequence_number = Cursor::new(&packet_data[4..8]).read_u32::<BigEndian>().unwrap();
-                    let payload = packet_data[4 + 10 + 12..].to_vec();
-                    let payload = pad_data(payload, data_len, amount);
-                    let packet = PacketData {
-                        timestamp: Instant::now(),
-                        sequence_number,
-                        payload,
-                    };
-                    let mut buffer = jitter_buffer_clone.lock().unwrap();
-                    buffer.insert(sequence_number, packet);
-                    handle_jitter_buffer(jitter_buffer.clone(), sender_udp.clone(), buffer_size);
+                };
+                let mut sequence_num_buf = [0u8; 8];
+                if let Err(e) = cursor.read_exact(&mut sequence_num_buf) {
+                    eprintln!("Error reading sequence number: {:?}", e);
+                    continue;
                 }
+                if sequence_num_buf[0..2] != [0xCC, 0xDD] || sequence_num_buf[6..8] != [0xDD, 0xCC] {
+                    eprintln!("Invalid sequence number header");
+                    continue;
+                }
+                let sequence_number = BigEndian::read_u32(&sequence_num_buf[2..6]);
+
+                let mut time_in_ms_buf = [0u8; 20];
+                if let Err(e) = cursor.read_exact(&mut time_in_ms_buf) {
+                    eprintln!("Error reading sequence number: {:?}", e);
+                    continue;
+                }
+                if time_in_ms_buf[0..2] != [0xAA, 0xBB] || time_in_ms_buf[18..20] != [0xBB, 0xAA] {
+                    eprintln!("Invalid timestamp header");
+                    continue;
+                }
+                let timestamp = BigEndian::read_u128(&time_in_ms_buf[2..18]);
+
+                let mut frame_size_buf = [0u8; 8];
+                if let Err(e) = cursor.read_exact(&mut frame_size_buf) {
+                    eprintln!("Error reading frame size number: {:?}", e);
+                    continue;
+                }
+                if frame_size_buf[0..2] != [0xEE, 0xFF] || frame_size_buf[6..8] != [0xFF, 0xEE] {
+                    eprintln!("Invalid frame size number header");
+                    continue;
+                }
+                let frame_size = BigEndian::read_u32(&frame_size_buf[2..6]);
+                println!("packet_len: {packet_len}, sequence_number: {sequence_number}, timestamp: {timestamp}, frame_size: {frame_size}");
+
+                let payload_start = cursor.position() as usize;
+                let payload = &buf[payload_start..amount];
+                // let payload = pad_data(payload, data_len, amount);
+                let packet = PacketData {
+                    sequence_number,
+                    frame_size,
+                    payload: payload.to_vec(),
+                };
+
+                {
+                    let mut buffer = jitter_buffer.lock().expect("Unable to acquire jitter buffer lock");
+                    buffer.insert(sequence_number, packet);
+                }
+                handle_jitter_buffer(jitter_buffer.clone(), sender_udp.clone(), min_buffer_fill, frame_size);
             }
         }
     })
 }
 
-fn pad_data(mut data: Vec<u8>, expected_len: u32, received_len: usize) -> Vec<u8> {
+fn _pad_data(mut data: Vec<u8>, expected_len: u32, received_len: usize) -> Vec<u8> {
     if received_len < expected_len as usize {
         data.extend(vec![0; expected_len as usize - received_len]);
     }
@@ -172,41 +213,52 @@ fn pad_data(mut data: Vec<u8>, expected_len: u32, received_len: usize) -> Vec<u8
 
 fn handle_jitter_buffer(
     jitter_buffer: Arc<Mutex<BTreeMap<u32, PacketData>>>,
-    sender_udp: Sender<Vec<u8>>,
-    buffer_size: usize
+    sender_udp: Sender<(Vec<u8>, u32)>,
+    min_buffer_fill: usize,
+    frame_size: u32,
 ) {
-    let mut buffer = jitter_buffer.lock().unwrap();
-    if buffer.len() >= buffer_size {
+    let mut buffer = jitter_buffer.lock().expect("Unable to get lock for jitter buffer");
+    // if the buffer is filled
+    if buffer.len() >= min_buffer_fill {
         let keys: Vec<_> = buffer.keys().cloned().collect();
-        for i in 1..keys.len() {
-            let expected_seq = keys[i-1] + 1;
-            if keys[i] != expected_seq {
-                let interpolated_data = interpolate_data(&buffer[&keys[i-1]].payload, &buffer[&keys[i]].payload);
+        let min_seq = *keys.first().unwrap();
+        let max_seq = *keys.last().unwrap();
+
+        for expected_seq in min_seq..=max_seq {
+            if !buffer.contains_key(&expected_seq) {
+                let reference_payload = match buffer.range(..expected_seq).next_back() {
+                    Some((_seq, packet)) => &packet.payload,
+                    None => {
+                        continue;
+                    }
+                };
+                let interpolated_data = interpolate_placeholder(reference_payload);
                 buffer.insert(expected_seq, PacketData {
-                    timestamp: Instant::now(),
                     sequence_number: expected_seq,
+                    frame_size,
                     payload: interpolated_data,
                 });
             }
         }
+        println!("Final Buffer: {:?}", buffer);
         for (_, packet) in buffer.iter() {
-            if let Err(e) = sender_udp.send(packet.payload.clone()) {
+            if let Err(e) = sender_udp.send((packet.payload.clone(), frame_size)) {
                 eprintln!("SERVER: Failed to send data to audio thread: {:?}", e);
             }
         }
         buffer.clear();
     }
 }
-fn interpolate_data(prev_payload: &[u8], _next_payload: &[u8]) -> Vec<u8> {
+fn interpolate_placeholder(prev_payload: &[u8]) -> Vec<u8> {
     prev_payload.to_vec()
 }
 
 fn start_decoder_thread(
-    receiver_audio: Receiver<Vec<u8>>,
+    receiver_audio: Receiver<(Vec<u8>, u32)>,
     sender_decoder: Sender<Vec<f32>>,
     sample_rate: f32,
     channels: u16,
-    buffer_size: usize,
+    target_fill_rate: usize,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let opus_channels = if channels == 1 {
@@ -217,45 +269,63 @@ fn start_decoder_thread(
         let mut opus_decoder = Decoder::new(sample_rate as u32, opus_channels).unwrap();
         let mut accumulated_samples = Vec::with_capacity(1920);
 
-        while let Ok(packet) = receiver_audio.recv() {
-            process_packet(
-                packet,
-                &mut opus_decoder,
-                &mut accumulated_samples,
-                sender_decoder.clone(),
-                buffer_size,
-                channels as usize
-            );
+        while let Ok((packet, frame_size)) = receiver_audio.recv() {
+            let mut offset = 0;
+            while offset + 2 <= packet.len() {
+                offset += 2;
+                if offset + frame_size as usize > packet.len() {
+                    eprintln!("Incomplete frame detected");
+                    break;
+                }
+                let frame = &packet[offset..offset+frame_size as usize];
+                offset += frame_size as usize;
+                let decoded_samples = decode_packet(frame.to_vec(), &mut opus_decoder, channels);
+                if decoded_samples.is_empty(){
+                    let interpolated_samples = repeat_previous_frame(&accumulated_samples, target_fill_rate);
+                    accumulated_samples.extend_from_slice(&interpolated_samples);
+                } else {
+                    accumulated_samples.extend(decoded_samples);
+                }
+                if accumulated_samples.len() >= target_fill_rate {
+                    sender_decoder
+                        .send(accumulated_samples
+                            .drain(..target_fill_rate)
+                            .collect::<Vec<f32>>()
+                        )
+                        .expect("Failed to send decoded data");
+                }
+            }
         }
     })
 }
 
-fn process_packet(
+fn decode_packet(
     packet: Vec<u8>,
-    opus_decoder: &mut Decoder,
-    accumulated_samples: &mut Vec<f32>,
-    sender_decoder: Sender<Vec<f32>>,
-    buffer_size: usize,
-    channels: usize,
-) {
-    let frame_size = 160;
-    let num_frames = (packet.len() + frame_size - 1) / frame_size;
-
-    for i in 0..num_frames {
-        let frame_start = i * frame_size;
-        if frame_start + frame_size <= packet.len() {
-            let mut decoded_samples = vec![0.0; buffer_size * channels];
-            if let Ok(len) = opus_decoder.decode_float(
-                &packet[frame_start..frame_start + frame_size],
-                &mut decoded_samples,
-                false,
-            ) {
-                accumulated_samples.extend_from_slice(&decoded_samples[..len]);
-                if accumulated_samples.len() >= 1920 {
-                    sender_decoder.send(accumulated_samples.drain(..1920).collect()).expect("Failed to send decoded data");
-                }
-            }
+    decoder: &mut Decoder,
+    channels: u16,
+) -> Vec<f32> {
+    let max_frame_size = 5760 * channels as usize;
+    let mut decoded = vec![0.0; max_frame_size];
+    match decoder.decode_float(&packet, &mut decoded, false) {
+        Ok(len) => {
+            decoded.truncate(len * channels as usize);
+            decoded
+        },
+        Err(e) => {
+            eprintln!("Decoding failed: {:?}", e);
+            vec![] // Return empty vec if decoding fails
         }
+    }
+}
+
+fn repeat_previous_frame(
+    prev_samples: &[f32],
+    target_fill_rate: usize
+) -> Vec<f32> {
+    if prev_samples.is_empty() {
+        vec![0.0; target_fill_rate] // Fill with silence if no previous data
+    } else {
+        prev_samples.iter().cycle().take(target_fill_rate).cloned().collect()
     }
 }
 

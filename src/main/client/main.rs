@@ -154,7 +154,8 @@ fn batch_and_send_udp(
     let socket = UdpSocket::bind(&ip_port).expect("UDP: Failed to bind to socket");
 
     let packet_amount = 20;
-    let mut batch_buffer = vec![0u8; len_in.recv().unwrap() * packet_amount];
+    let frame_length = len_in.recv().unwrap();
+    let mut batch_buffer = vec![0u8; frame_length * packet_amount];
     let mut offset = 0;
     let mut sequence_number = 0;
 
@@ -166,7 +167,7 @@ fn batch_and_send_udp(
 
                 if offset == batch_buffer.len() {
                     for (_user, address) in user_table.lock().unwrap().clone() {
-                        send_packet(&socket, &address, &batch_buffer, sequence_number);
+                        send_packet(&socket, &address, &batch_buffer, sequence_number, frame_length);
                         sequence_number += 1;
                     }
                     offset = 0;
@@ -175,9 +176,9 @@ fn batch_and_send_udp(
         }
     }
 }
-fn send_packet(socket: &UdpSocket, address: &str, batch_buffer: &[u8], sequence_number: u32) {
+fn send_packet(socket: &UdpSocket, address: &str, batch_buffer: &[u8], sequence_number: u32, frame_length: usize) {
     let port = format!("{}:18521", address);
-    let packet = create_packet(batch_buffer, sequence_number);
+    let packet = create_packet(batch_buffer, sequence_number, frame_length);
     socket.send_to(&packet, &port).expect("Failed to send data");
 }
 fn current_time_in_ms() -> Vec<u8> {
@@ -200,21 +201,31 @@ fn sequencer(sequence_number: u32) -> Vec<u8> {
     sequence
 }
 
-fn create_packet(batch_buffer: &[u8], sequence_number: u32) -> Vec<u8> {
+fn tagger(number: usize) -> Vec<u8> {
+    let mut bytes = number.to_be_bytes().to_vec();
+    let mut sequence = vec![0xEE, 0xFF];
+    sequence.append(&mut bytes);
+    sequence.extend_from_slice(&[0xFF, 0xEE]);
+    sequence
+}
+fn create_packet(batch_buffer: &[u8], sequence_number: u32, frame_length: usize) -> Vec<u8> {
     let data_len = batch_buffer.len() as u32;
     let time_in_ms = current_time_in_ms();
     let sequence_num  = sequencer(sequence_number);
+    let frame_size = tagger(frame_length);
 
     let sequence_num_len = sequence_num.len() as u8;
     let time_in_ms_len = time_in_ms.len() as u8;
+    let frame_size_len = frame_size.len() as u8;
 
     let mut packet = Vec::with_capacity(
-        4 + sequence_num_len as usize + time_in_ms_len as usize + batch_buffer.len(),
+        4 + frame_size_len as usize + sequence_num_len as usize + time_in_ms_len as usize + batch_buffer.len(),
     );
 
     packet.write_u32::<BigEndian>(data_len).unwrap();
     packet.extend_from_slice(&sequence_num);
     packet.extend_from_slice(&time_in_ms);
+    packet.extend_from_slice(&frame_size);
     packet.extend_from_slice(batch_buffer);
     packet
 

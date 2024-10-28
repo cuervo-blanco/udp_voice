@@ -3,25 +3,37 @@ use cpal::{
     StreamConfig,
     traits::{DeviceTrait, StreamTrait},
 };
+#[allow(unused_imports)]
 use byteorder::{BigEndian, ReadBytesExt};
 use selflib::mdns_service::MdnsService;
 #[allow(unused_imports)]
 use log::{debug, info, warn, error};
 use selflib::settings::{Settings, ApplicationSettings};
+#[allow(unused_imports)]
 use std::{
-    collections::VecDeque,
+    collections::{VecDeque, BTreeMap},
     io::Cursor,
     net::{UdpSocket, IpAddr},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc,
+        Mutex,
+        mpsc::{channel, Sender, Receiver}
+    },
     time::Instant,
     error::Error,
     thread::JoinHandle,
 };
-use std::sync::mpsc::{channel, Sender, Receiver};
 #[allow(unused_imports)]
 use colored::*;
 use opus::Decoder;
 use cpal::SampleFormat;
+
+#[allow(dead_code)]
+struct PacketData {
+    timestamp: Instant,
+    sequence_number: u32,
+    payload: Vec<u8>
+}
 
 fn main (){
     env_logger::init();
@@ -54,7 +66,7 @@ fn main (){
     let playback_buffer = Arc::clone(&delay_buffer);
 
     // UDP Thread
-    let udp_thread = start_udp_thread(socket, sender_udp);
+    let udp_thread = start_udp_thread(socket, sender_udp, buffer_size);
 
     // Decoder Thread
     let decoder_thread = start_decoder_thread(
@@ -96,7 +108,7 @@ fn get_audio_config(settings: &ApplicationSettings) -> (u16, f32, usize, SampleF
     )
 }
 fn setup_mdns(ip: IpAddr, port: u16) -> MdnsService {
-    let service_type = "udp_voice._udp.local.";
+    let service_type = "_udp_voice._udp.local.";
     let properties = vec![
         ("service name", "udp voice"),
         ("service type", service_type),
@@ -108,13 +120,18 @@ fn setup_mdns(ip: IpAddr, port: u16) -> MdnsService {
     mdns.browse_services();
     mdns
 }
-fn start_udp_thread(socket: UdpSocket, sender_udp: Sender<Vec<u8>>) -> JoinHandle<()> {
+fn start_udp_thread(socket: UdpSocket, sender_udp: Sender<Vec<u8>>, buffer_size: usize) -> JoinHandle<()> {
+    let jitter_buffer: Arc<Mutex<BTreeMap<u32, PacketData>>> = Arc::new(Mutex::new(BTreeMap::new()));
+    let jitter_buffer_clone = jitter_buffer.clone();
     std::thread::spawn(move || {
         let mut prev_packet_time: Option<Instant> = None;
-
         loop {
             let mut header = [0u8; 4];
-            if let Ok(_) = socket.recv_from(&mut header) {
+            if socket.recv_from(&mut header).is_ok() {
+                let data_len = Cursor::new(&header).read_u32::<BigEndian>().unwrap();
+                let mut packet_data = vec![0; 10 + 12 + data_len as usize];
+                let total_packet_len = 10 + 12 + data_len as usize;
+
                 let current_packet_time = Instant::now();
                 if let Some(prev_time) = prev_packet_time {
                     println!(
@@ -124,12 +141,22 @@ fn start_udp_thread(socket: UdpSocket, sender_udp: Sender<Vec<u8>>) -> JoinHandl
                 }
                 prev_packet_time = Some(current_packet_time);
 
-                let data_len = Cursor::new(&header).read_u32::<BigEndian>().unwrap();
-                let mut encoded_data = vec![0; data_len as usize];
-                if let Ok((amount, _)) = socket.recv_from(&mut encoded_data) {
-                    if let Err(e) = sender_udp.send(pad_data(encoded_data, data_len, amount)) {
-                        eprintln!("SERVER: Failed to send data to audio thread: {:?}", e);
+                if let Ok((amount, _)) = socket.recv_from(&mut packet_data) {
+                    if amount < total_packet_len {
+                        eprintln!("Received incomplete packet");
+                        continue;
                     }
+                    let sequence_number = Cursor::new(&packet_data[4..8]).read_u32::<BigEndian>().unwrap();
+                    let payload = packet_data[4 + 10 + 12..].to_vec();
+                    let payload = pad_data(payload, data_len, amount);
+                    let packet = PacketData {
+                        timestamp: Instant::now(),
+                        sequence_number,
+                        payload,
+                    };
+                    let mut buffer = jitter_buffer_clone.lock().unwrap();
+                    buffer.insert(sequence_number, packet);
+                    handle_jitter_buffer(jitter_buffer.clone(), sender_udp.clone(), buffer_size);
                 }
             }
         }
@@ -141,6 +168,37 @@ fn pad_data(mut data: Vec<u8>, expected_len: u32, received_len: usize) -> Vec<u8
         data.extend(vec![0; expected_len as usize - received_len]);
     }
     data
+}
+
+fn handle_jitter_buffer(
+    jitter_buffer: Arc<Mutex<BTreeMap<u32, PacketData>>>,
+    sender_udp: Sender<Vec<u8>>,
+    buffer_size: usize
+) {
+    let mut buffer = jitter_buffer.lock().unwrap();
+    if buffer.len() >= buffer_size {
+        let keys: Vec<_> = buffer.keys().cloned().collect();
+        for i in 1..keys.len() {
+            let expected_seq = keys[i-1] + 1;
+            if keys[i] != expected_seq {
+                let interpolated_data = interpolate_data(&buffer[&keys[i-1]].payload, &buffer[&keys[i]].payload);
+                buffer.insert(expected_seq, PacketData {
+                    timestamp: Instant::now(),
+                    sequence_number: expected_seq,
+                    payload: interpolated_data,
+                });
+            }
+        }
+        for (_, packet) in buffer.iter() {
+            if let Err(e) = sender_udp.send(packet.payload.clone()) {
+                eprintln!("SERVER: Failed to send data to audio thread: {:?}", e);
+            }
+        }
+        buffer.clear();
+    }
+}
+fn interpolate_data(prev_payload: &[u8], _next_payload: &[u8]) -> Vec<u8> {
+    prev_payload.to_vec()
 }
 
 fn start_decoder_thread(
@@ -186,12 +244,13 @@ fn process_packet(
     for i in 0..num_frames {
         let frame_start = i * frame_size;
         if frame_start + frame_size <= packet.len() {
+            let mut decoded_samples = vec![0.0; buffer_size * channels];
             if let Ok(len) = opus_decoder.decode_float(
                 &packet[frame_start..frame_start + frame_size],
-                &mut vec![0.0; buffer_size * channels],
+                &mut decoded_samples,
                 false,
             ) {
-                accumulated_samples.extend_from_slice(&vec![0.0; len]);
+                accumulated_samples.extend_from_slice(&decoded_samples[..len]);
                 if accumulated_samples.len() >= 1920 {
                     sender_decoder.send(accumulated_samples.drain(..1920).collect()).expect("Failed to send decoded data");
                 }
@@ -275,10 +334,4 @@ fn fill_audio_data(data: &mut [f32], buffer: &Arc<Mutex<VecDeque<f32>>>) {
         *sample = buffer.pop_front().unwrap_or(0.0);
     }
 }
-
-
-
-
-
-
 

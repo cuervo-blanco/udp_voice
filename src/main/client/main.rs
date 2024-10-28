@@ -34,8 +34,8 @@ fn main () -> Result<(), Box<dyn std::error::Error>> {
     let (sample_rate, channels, buffer_size) = get_audio_config(&settings);
     println!("");
     println!("{}", "Enter Username:".cyan());
-    println!("");
     let username = username_take();
+    println!("");
     let instance_name = Arc::new(Mutex::new(username));
     let ip =  local_ip_address::local_ip().unwrap();
     let port: u16 = 18522;

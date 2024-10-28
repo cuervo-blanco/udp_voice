@@ -201,7 +201,7 @@ fn sequencer(sequence_number: u32) -> Vec<u8> {
     sequence
 }
 
-fn tagger(number: usize) -> Vec<u8> {
+fn tagger(number: u32) -> Vec<u8> {
     let mut bytes = number.to_be_bytes().to_vec();
     let mut sequence = vec![0xEE, 0xFF];
     sequence.append(&mut bytes);
@@ -212,7 +212,7 @@ fn create_packet(batch_buffer: &[u8], sequence_number: u32, frame_length: usize)
     let data_len = batch_buffer.len() as u32;
     let time_in_ms = current_time_in_ms();
     let sequence_num  = sequencer(sequence_number);
-    let frame_size = tagger(frame_length);
+    let frame_size = tagger(frame_length as u32);
 
     let sequence_num_len = sequence_num.len() as u8;
     let time_in_ms_len = time_in_ms.len() as u8;

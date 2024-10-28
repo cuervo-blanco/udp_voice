@@ -173,16 +173,16 @@ fn start_udp_thread(socket: UdpSocket, sender_udp: Sender<(Vec<u8>, u32)>, min_b
                 }
                 let timestamp = BigEndian::read_u128(&time_in_ms_buf[2..18]);
 
-                let mut frame_size_buf = [0u8; 12];
+                let mut frame_size_buf = [0u8; 8];
                 if let Err(e) = cursor.read_exact(&mut frame_size_buf) {
                     eprintln!("Error reading frame size number: {:?}", e);
                     continue;
                 }
-                if frame_size_buf[0..2] != [0xEE, 0xFF] || frame_size_buf[10..12] != [0xFF, 0xEE] {
+            if frame_size_buf[0..2] != [0xEE, 0xFF] || frame_size_buf[6..8] != [0xFF, 0xEE] {
                     eprintln!("Invalid frame size number header");
                     continue;
                 }
-                let frame_size = BigEndian::read_u32(&frame_size_buf[2..10]);
+                let frame_size = BigEndian::read_u32(&frame_size_buf[2..6]);
                 println!("packet_len: {packet_len}, sequence_number: {sequence_number}, timestamp: {timestamp}, frame_size: {frame_size}");
 
                 let payload_start = cursor.position() as usize;

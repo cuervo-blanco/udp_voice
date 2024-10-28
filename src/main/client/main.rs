@@ -143,7 +143,7 @@ fn encode_opus(
         }
     }
 }
-fn batch_and_send_udp(
+fn _batch_and_send_udp_v1(
     ip: IpAddr,
     port: u16,
     input_buffer: Receiver<Vec<u8>>,
@@ -172,6 +172,39 @@ fn batch_and_send_udp(
                     }
                     offset = 0;
                 }
+            }
+        }
+    }
+}
+
+fn batch_and_send_udp(
+    ip: IpAddr,
+    port: u16,
+    input_buffer: Receiver<Vec<u8>>,
+    len_in: Receiver<usize>,
+    user_table: Arc<Mutex<HashMap<String, String>>>,
+) {
+    let ip_port = format!("{}:{}", ip, port);
+    let socket = UdpSocket::bind(&ip_port).expect("UDP: Failed to bind to socket");
+
+    let packet_amount = 20;
+    let mut batch_buffer = Vec::new(); // Start with an empty vector
+    let mut sequence_number = 0;
+
+    loop {
+        if let Ok(block) = input_buffer.recv() {
+            let frame_length = block.len() as u16; // Assuming frame length fits in u16
+
+            // Include the length of the frame before the frame data
+            batch_buffer.extend_from_slice(&frame_length.to_be_bytes());
+            batch_buffer.extend_from_slice(&block);
+
+            if batch_buffer.len() >= packet_amount * (frame_length as usize + 2) {
+                for (_user, address) in user_table.lock().unwrap().clone() {
+                    send_packet(&socket, &address, &batch_buffer, sequence_number, frame_length);
+                    sequence_number += 1;
+                }
+                batch_buffer.clear();
             }
         }
     }

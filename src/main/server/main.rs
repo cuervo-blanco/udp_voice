@@ -269,29 +269,31 @@ fn start_decoder_thread(
         let mut opus_decoder = Decoder::new(sample_rate as u32, opus_channels).unwrap();
         let mut accumulated_samples = Vec::with_capacity(1920);
 
-        while let Ok((packet, frame_size)) = receiver_audio.recv() {
+        while let Ok((packet, _frame_size)) = receiver_audio.recv() {
             let mut offset = 0;
             while offset + 2 <= packet.len() {
+                let frame_length = BigEndian::read_u16(&packet[offset..offset + 2]) as usize;
                 offset += 2;
-                if offset + frame_size as usize > packet.len() {
+
+                if offset + frame_length > packet.len() {
                     eprintln!("Incomplete frame detected");
                     break;
                 }
-                let frame = &packet[offset..offset+frame_size as usize];
-                offset += frame_size as usize;
+
+                let frame = &packet[offset..offset + frame_length];
+                offset += frame_length;
+
                 let decoded_samples = decode_packet(frame.to_vec(), &mut opus_decoder, channels);
-                if decoded_samples.is_empty(){
+                if decoded_samples.is_empty() {
                     let interpolated_samples = repeat_previous_frame(&accumulated_samples, target_fill_rate);
                     accumulated_samples.extend_from_slice(&interpolated_samples);
                 } else {
                     accumulated_samples.extend(decoded_samples);
                 }
+
                 if accumulated_samples.len() >= target_fill_rate {
                     sender_decoder
-                        .send(accumulated_samples
-                            .drain(..target_fill_rate)
-                            .collect::<Vec<f32>>()
-                        )
+                        .send(accumulated_samples.drain(..target_fill_rate).collect())
                         .expect("Failed to send decoded data");
                 }
             }

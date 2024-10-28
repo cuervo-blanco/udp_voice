@@ -3,19 +3,12 @@ use cpal::traits::{DeviceTrait, StreamTrait};
 use std::io::Cursor;
 use byteorder::{BigEndian, ReadBytesExt};
 use std::sync::{Arc, Mutex};
-#[allow(unused_imports)]
-use ringbuf::HeapRb;
-#[allow(unused_imports)]
-use ringbuf::traits::{Consumer, Producer, Split};
 use selflib::mdns_service::MdnsService;
 #[allow(unused_imports)]
 use log::{debug, info, warn, error};
 use std::net::UdpSocket;
 use selflib::settings::{Settings, ApplicationSettings};
-#[allow(unused_imports)]
-use selflib::sound::dac;
 use std::sync::mpsc::channel;
-#[allow(unused_imports)]
 use colored::*;
 use opus::Decoder;
 use cpal::SampleFormat;
@@ -64,19 +57,31 @@ fn main (){
 
     let (sender_udp, receiver_audio) = channel();
 
+    let mut prev_packet_time: Option<std::time::Instant> = None;
+
     let udp_thread = std::thread::spawn( move ||{
-        println!("SERVER: Started UDP receiving thread");
         loop {
             let mut header = [0u8; 4];
             // Receive the header first (4 bytes indicating the length of the data)
             if let Ok((_,_source)) = socket.recv_from(&mut header) {
+                let current_packet_time = std::time::Instant::now();
                 let mut cursor = Cursor::new(&header);
                 let data_len = cursor.read_u32::<BigEndian>().unwrap();
-                println!("Data len (from header): {data_len}");
+                //println!("Data len (from header): {data_len}");
+
+                if let Some(prev_time) = prev_packet_time {
+                    let duration = current_packet_time.duration_since(prev_time);
+                    println!(
+                        "Time since last packet: {:.3} ms",
+                        duration.as_secs_f64() * 1000.0
+                    );
+                }
+
+                prev_packet_time = Some(current_packet_time);
 
                 let mut encoded_data = vec![0; data_len as usize];
                 if let Ok((amount, _source)) = socket.recv_from(&mut encoded_data) {
-                    println!("UDP: Received data (with header): {}", amount);
+                    //println!("UDP: Received data (with header): {}", amount);
                     if amount != data_len as usize {
                         eprint!("{}", format!("Warning: Expected {} bytes but received {}", data_len, amount).red());
                     }
@@ -89,9 +94,9 @@ fn main (){
                     if audio_data.len() < data_len as usize {
                         let padding_needed = data_len as usize - audio_data.len();
                         audio_data.extend(vec![0; padding_needed]);
-                        println!("Padded audio data to lenght: {}", audio_data.len());
+                        //println!("Padded audio data to lenght: {}", audio_data.len());
                     }
-                    println!("UDP: Received data (without header): {}", audio_data.len());
+                    //println!("UDP: Received data (without header): {}", audio_data.len());
                     if let Err(e) = sender_udp.send(audio_data) {
                        eprintln!("SERVER: Failed to send data to audio thread: {:?}", e);
                     }
@@ -122,7 +127,7 @@ fn main (){
             //println!("Packet Size: {}", packet.len());
             let frame_size = 160;
             let num_frames = (packet.len() + frame_size - 1) / frame_size;
-            println!("Number of frames : {}", num_frames);
+            //println!("Number of frames : {}", num_frames);
             for i in 0..num_frames {
                 let frame_start = i * frame_size;
                 //println!("FRAME {} Start: {}", i + 1, frame_start);
@@ -131,7 +136,7 @@ fn main (){
 
                 if frame_end <= packet.len() {
                     let frame = &packet[frame_start..frame_end];
-                    println!("DECODER: FRAME {} Size: {:?}", i + 1,  frame.len());
+                    //println!("DECODER: FRAME {} Size: {:?}", i + 1,  frame.len());
                     //println!("FRAME {}: {:?}", i + 1, frame);
                     let mut decoded_frame = vec![0.0; buffer_size * channels as usize];
                     match opus_decoder.decode_float(frame, &mut decoded_frame, false) {
@@ -139,7 +144,7 @@ fn main (){
                             let decoded_data = decoded_frame[..len].to_vec();
                             accumulated_samples.extend_from_slice(&decoded_data);
                             //println!("{}", format!("DECODED FRAME {}: {:?}", i+1, decoded_data).yellow());
-                            println!("{}", format!("DECODER: Decoded block of size: {}", len).magenta());
+                            //println!("{}", format!("DECODER: Decoded block of size: {}", len).magenta());
                             if accumulated_samples.len() >= accum_size {
                                 let buffer_chunk = accumulated_samples.drain(..accum_size).collect::<Vec<f32>>();
                                 sender_decoder.send(buffer_chunk).expect("Failed to send decoded data");
@@ -158,7 +163,7 @@ fn main (){
 
     let _magic_number = 1920;
 
-    let delay_buffer_size = buffer_size * 50;
+    let delay_buffer_size = buffer_size * 100;
     let delay_buffer: Arc<Mutex<VecDeque<f32>>> = Arc::new(Mutex::new(VecDeque::with_capacity(delay_buffer_size)));
 
     let delay_buffer_producer = Arc::clone(&delay_buffer);
@@ -186,8 +191,8 @@ fn main (){
             {
                 let buffer = playback_buffer.lock()
                     .expect("Failed to acquire playback buffer lock");
-                if buffer.len() >= delay_buffer_size * 3 / 4 {
-                    println!("Starting playback with buffer size: {}", buffer.len());
+                if buffer.len() >= delay_buffer_size * 4 / 5 {
+                    //println!("Starting playback with buffer size: {}", buffer.len());
                     break;
                 }
             }
@@ -201,8 +206,8 @@ fn main (){
                     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                         let mut buffer = playback_buffer.lock().expect("Failed to lock buffer for playback");
                         // let available_samples = buffer.len();
-                        let requested_samples = data.len();
-                        println!("CALLBACK: Samples read (data): {:?}", requested_samples);
+                        //let requested_samples = data.len();
+                        //println!("CALLBACK: Samples read (data): {:?}", requested_samples);
 
                         if buffer.len() >= data.len() {
                             for sample in data.iter_mut() {
@@ -213,7 +218,7 @@ fn main (){
                                 *sample = 0.0;
                             }
                         }
-                        println!("CALLBACK: Reamining buffer size after filling data: {}", buffer.len());
+                        //println!("CALLBACK: Remaining buffer size after filling data: {}", buffer.len());
 
                 },
                 move |err| {

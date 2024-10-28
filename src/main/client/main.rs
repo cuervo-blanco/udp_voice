@@ -115,13 +115,12 @@ fn start_sending(
 ) {
     let (output_sine, input_encoder) = channel();
     let (output_encoder, input_buffer) = channel();
-    let (len_out, len_in) = channel();
 
     Sine::new(440.0, 1.0, sample_rate as u32, channels as usize, output_sine, buffer_size);
 
-    std::thread::spawn(move || encode_opus(input_encoder, output_encoder, sample_rate, opus_channels, buffer_size, len_out));
+    std::thread::spawn(move || encode_opus(input_encoder, output_encoder, sample_rate, opus_channels, buffer_size));
 
-    std::thread::spawn(move || batch_and_send_udp(ip, port, input_buffer, len_in, user_table));
+    std::thread::spawn(move || batch_and_send_udp(ip, port, input_buffer, user_table));
 }
 fn encode_opus(
     input_encoder: Receiver<Vec<f32>>,
@@ -129,7 +128,6 @@ fn encode_opus(
     sample_rate: f32,
     opus_channels: opus::Channels,
     buffer_size: usize,
-    len_out: Sender<usize>,
 ) {
     let mut opus_encoder = Encoder::new(sample_rate as u32, opus_channels, Application::Audio).unwrap();
     opus_encoder.set_bitrate(opus::Bitrate::Bits(64000)).unwrap();
@@ -139,40 +137,6 @@ fn encode_opus(
         let mut encoded_block = vec![0; buffer_size];
         if let Ok(len) = opus_encoder.encode_float(&block, &mut encoded_block) {
             output_encoder.send(encoded_block[..len].to_vec()).expect("Failed to send encoded data");
-            len_out.send(len).unwrap();
-        }
-    }
-}
-fn _batch_and_send_udp_v1(
-    ip: IpAddr,
-    port: u16,
-    input_buffer: Receiver<Vec<u8>>,
-    len_in: Receiver<usize>,
-    user_table: Arc<Mutex<HashMap<String, String>>>,
-) {
-    let ip_port = format!("{}:{}", ip, port);
-    let socket = UdpSocket::bind(&ip_port).expect("UDP: Failed to bind to socket");
-
-    let packet_amount = 20;
-    let frame_length = len_in.recv().unwrap();
-    let mut batch_buffer = vec![0u8; frame_length * packet_amount];
-    let mut offset = 0;
-    let mut sequence_number = 0;
-
-    loop {
-        if let Ok(block) = input_buffer.recv() {
-            for &sample in &block {
-                batch_buffer[offset] = sample;
-                offset += 1;
-
-                if offset == batch_buffer.len() {
-                    for (_user, address) in user_table.lock().unwrap().clone() {
-                        send_packet(&socket, &address, &batch_buffer, sequence_number, frame_length);
-                        sequence_number += 1;
-                    }
-                    offset = 0;
-                }
-            }
         }
     }
 }
@@ -181,7 +145,6 @@ fn batch_and_send_udp(
     ip: IpAddr,
     port: u16,
     input_buffer: Receiver<Vec<u8>>,
-    len_in: Receiver<usize>,
     user_table: Arc<Mutex<HashMap<String, String>>>,
 ) {
     let ip_port = format!("{}:{}", ip, port);
@@ -201,7 +164,7 @@ fn batch_and_send_udp(
 
             if batch_buffer.len() >= packet_amount * (frame_length as usize + 2) {
                 for (_user, address) in user_table.lock().unwrap().clone() {
-                    send_packet(&socket, &address, &batch_buffer, sequence_number, frame_length);
+                    send_packet(&socket, &address, &batch_buffer, sequence_number);
                     sequence_number += 1;
                 }
                 batch_buffer.clear();
@@ -209,9 +172,9 @@ fn batch_and_send_udp(
         }
     }
 }
-fn send_packet(socket: &UdpSocket, address: &str, batch_buffer: &[u8], sequence_number: u32, frame_length: usize) {
+fn send_packet(socket: &UdpSocket, address: &str, batch_buffer: &[u8], sequence_number: u32) {
     let port = format!("{}:18521", address);
-    let packet = create_packet(batch_buffer, sequence_number, frame_length);
+    let packet = create_packet(batch_buffer, sequence_number);
     socket.send_to(&packet, &port).expect("Failed to send data");
 }
 fn current_time_in_ms() -> Vec<u8> {
@@ -234,31 +197,21 @@ fn sequencer(sequence_number: u32) -> Vec<u8> {
     sequence
 }
 
-fn tagger(number: u32) -> Vec<u8> {
-    let mut bytes = number.to_be_bytes().to_vec();
-    let mut sequence = vec![0xEE, 0xFF];
-    sequence.append(&mut bytes);
-    sequence.extend_from_slice(&[0xFF, 0xEE]);
-    sequence
-}
-fn create_packet(batch_buffer: &[u8], sequence_number: u32, frame_length: usize) -> Vec<u8> {
+fn create_packet(batch_buffer: &[u8], sequence_number: u32) -> Vec<u8> {
     let data_len = batch_buffer.len() as u32;
     let time_in_ms = current_time_in_ms();
     let sequence_num  = sequencer(sequence_number);
-    let frame_size = tagger(frame_length as u32);
 
     let sequence_num_len = sequence_num.len() as u8;
     let time_in_ms_len = time_in_ms.len() as u8;
-    let frame_size_len = frame_size.len() as u8;
 
     let mut packet = Vec::with_capacity(
-        4 + frame_size_len as usize + sequence_num_len as usize + time_in_ms_len as usize + batch_buffer.len(),
+        4 + sequence_num_len as usize + time_in_ms_len as usize + batch_buffer.len(),
     );
 
     packet.write_u32::<BigEndian>(data_len).unwrap();
     packet.extend_from_slice(&sequence_num);
     packet.extend_from_slice(&time_in_ms);
-    packet.extend_from_slice(&frame_size);
     packet.extend_from_slice(batch_buffer);
     packet
 

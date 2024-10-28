@@ -32,8 +32,7 @@ use cpal::SampleFormat;
 #[derive(Debug)]
 struct PacketData {
     sequence_number: u32,
-    frame_size: u32,
-    payload: Vec<u8>
+    payload: Vec<u8>,
 }
 
 const DATA_LEN_SIZE: usize = 4;
@@ -128,7 +127,7 @@ fn setup_mdns(ip: IpAddr, port: u16) -> MdnsService {
     mdns.browse_services();
     mdns
 }
-fn start_udp_thread(socket: UdpSocket, sender_udp: Sender<(Vec<u8>, u32)>, min_buffer_fill: usize) -> JoinHandle<()> {
+fn start_udp_thread(socket: UdpSocket, sender_udp: Sender<Vec<u8>>, min_buffer_fill: usize) -> JoinHandle<()> {
     // [Data Length (4 bytes)] + [Sequence Number (8 bytes)] + [Timestamp (20 bytes)] + [Payload (variable length)]
     let jitter_buffer: Arc<Mutex<BTreeMap<u32, PacketData>>> = Arc::new(Mutex::new(BTreeMap::new()));
     std::thread::spawn(move || {
@@ -173,32 +172,23 @@ fn start_udp_thread(socket: UdpSocket, sender_udp: Sender<(Vec<u8>, u32)>, min_b
                 }
                 let timestamp = BigEndian::read_u128(&time_in_ms_buf[2..18]);
 
-                let mut frame_size_buf = [0u8; 8];
-                if let Err(e) = cursor.read_exact(&mut frame_size_buf) {
-                    eprintln!("Error reading frame size number: {:?}", e);
-                    continue;
-                }
-            if frame_size_buf[0..2] != [0xEE, 0xFF] || frame_size_buf[6..8] != [0xFF, 0xEE] {
-                    eprintln!("Invalid frame size number header");
-                    continue;
-                }
-                let frame_size = BigEndian::read_u32(&frame_size_buf[2..6]);
-                println!("packet_len: {packet_len}, sequence_number: {sequence_number}, timestamp: {timestamp}, frame_size: {frame_size}");
+                println!("data_len: {packet_len}, sequence_num: {sequence_number}, timestamp: {timestamp}");
 
                 let payload_start = cursor.position() as usize;
                 let payload = &buf[payload_start..amount];
                 // let payload = pad_data(payload, data_len, amount);
                 let packet = PacketData {
                     sequence_number,
-                    frame_size,
                     payload: payload.to_vec(),
                 };
 
                 {
-                    let mut buffer = jitter_buffer.lock().expect("Unable to acquire jitter buffer lock");
+                    let mut buffer = jitter_buffer.lock()
+                        .expect("Unable to acquire jitter buffer lock");
                     buffer.insert(sequence_number, packet);
-                }
-                handle_jitter_buffer(jitter_buffer.clone(), sender_udp.clone(), min_buffer_fill, frame_size);
+            }
+
+                handle_jitter_buffer(jitter_buffer.clone(), sender_udp.clone(), min_buffer_fill);
             }
         }
     })
@@ -213,13 +203,13 @@ fn _pad_data(mut data: Vec<u8>, expected_len: u32, received_len: usize) -> Vec<u
 
 fn handle_jitter_buffer(
     jitter_buffer: Arc<Mutex<BTreeMap<u32, PacketData>>>,
-    sender_udp: Sender<(Vec<u8>, u32)>,
+    sender_udp: Sender<Vec<u8>>,
     min_buffer_fill: usize,
-    frame_size: u32,
 ) {
     let mut buffer = jitter_buffer.lock().expect("Unable to get lock for jitter buffer");
     // if the buffer is filled
     if buffer.len() >= min_buffer_fill {
+        println!("Original buffer keys: {:?}", buffer.keys());
         let keys: Vec<_> = buffer.keys().cloned().collect();
         let min_seq = *keys.first().unwrap();
         let max_seq = *keys.last().unwrap();
@@ -235,14 +225,13 @@ fn handle_jitter_buffer(
                 let interpolated_data = interpolate_placeholder(reference_payload);
                 buffer.insert(expected_seq, PacketData {
                     sequence_number: expected_seq,
-                    frame_size,
                     payload: interpolated_data,
                 });
             }
         }
-        println!("Final Buffer: {:?}", buffer);
+        println!("Final Buffer Keys: {:?}", buffer.keys());
         for (_, packet) in buffer.iter() {
-            if let Err(e) = sender_udp.send((packet.payload.clone(), frame_size)) {
+            if let Err(e) = sender_udp.send(packet.payload.clone()) {
                 eprintln!("SERVER: Failed to send data to audio thread: {:?}", e);
             }
         }
@@ -254,7 +243,7 @@ fn interpolate_placeholder(prev_payload: &[u8]) -> Vec<u8> {
 }
 
 fn start_decoder_thread(
-    receiver_audio: Receiver<(Vec<u8>, u32)>,
+    receiver_audio: Receiver<Vec<u8>>,
     sender_decoder: Sender<Vec<f32>>,
     sample_rate: f32,
     channels: u16,
@@ -269,7 +258,7 @@ fn start_decoder_thread(
         let mut opus_decoder = Decoder::new(sample_rate as u32, opus_channels).unwrap();
         let mut accumulated_samples = Vec::with_capacity(1920);
 
-        while let Ok((packet, _frame_size)) = receiver_audio.recv() {
+        while let Ok(packet) = receiver_audio.recv() {
             let mut offset = 0;
             while offset + 2 <= packet.len() {
                 let frame_length = BigEndian::read_u16(&packet[offset..offset + 2]) as usize;

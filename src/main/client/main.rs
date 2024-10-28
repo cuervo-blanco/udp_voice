@@ -197,7 +197,7 @@ fn sequencer(sequence_number: u32) -> Vec<u8> {
     let mut bytes = sequence_number.to_be_bytes().to_vec();
     let mut sequence = vec![0xCC, 0xDD];
     sequence.append(&mut bytes);
-    sequence.extend_from_slice(&[0xCC, 0xDD]);
+    sequence.extend_from_slice(&[0xDD, 0xCC]);
     sequence
 }
 

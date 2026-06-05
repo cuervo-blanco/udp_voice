@@ -30,6 +30,7 @@ use std::{
     thread::JoinHandle,
     time::Instant,
 };
+use tcp_chat::{ChatConfig, ChatEvent, ChatRuntimeInfo, LanChat};
 
 const MAX_PACKET_SIZE: usize = PACKET_HEADER_SIZE + MAX_OPUS_PACKET_SIZE;
 
@@ -87,6 +88,7 @@ fn run(args: CliOptions) -> Result<(), Box<dyn Error>> {
     };
 
     let mdns = setup_mdns(&username, local_addr, Some(&network.name))?;
+    let text_chat = start_text_chat(&username, &network)?;
     let peers = mdns.get_user_table();
     let route_selection = Arc::new(Mutex::new(RouteSelection::All));
     let tx_enabled = Arc::new(AtomicBool::new(false));
@@ -111,7 +113,12 @@ fn run(args: CliOptions) -> Result<(), Box<dyn Error>> {
     input_stream.play()?;
     output_stream.play()?;
 
-    print_startup(&settings, &local_peer, &runtime_network);
+    print_startup(
+        &settings,
+        &local_peer,
+        &runtime_network,
+        &text_chat.runtime_info,
+    );
     print_help();
 
     let _runtime = PeerRuntime {
@@ -120,6 +127,7 @@ fn run(args: CliOptions) -> Result<(), Box<dyn Error>> {
         _sender_thread: sender_thread,
         _receiver_thread: receiver_thread,
         _mdns: mdns,
+        _text_chat: text_chat,
     };
 
     command_loop(
@@ -130,6 +138,7 @@ fn run(args: CliOptions) -> Result<(), Box<dyn Error>> {
         local_peer,
         inventory,
         runtime_network,
+        &_runtime._text_chat,
         &settings,
     )
 }
@@ -140,6 +149,7 @@ struct PeerRuntime {
     _sender_thread: JoinHandle<()>,
     _receiver_thread: JoinHandle<()>,
     _mdns: MdnsService,
+    _text_chat: TextChatRuntime,
 }
 
 #[derive(Clone, Debug)]
@@ -209,6 +219,36 @@ struct RuntimeNetworkConfig {
     interface: NetworkInterfaceInfo,
     bind_port: u16,
     preferences_path: PathBuf,
+}
+
+struct TextChatRuntime {
+    chat: LanChat,
+    runtime_info: ChatRuntimeInfo,
+    event_thread: Option<JoinHandle<()>>,
+}
+
+impl TextChatRuntime {
+    fn send(&self, body: impl Into<String>) -> Result<(), Box<dyn Error>> {
+        self.chat.send(body.into())?;
+        Ok(())
+    }
+
+    fn peers(&self) -> Vec<tcp_chat::Peer> {
+        self.chat.peers()
+    }
+
+    fn runtime_info(&self) -> Result<ChatRuntimeInfo, Box<dyn Error>> {
+        Ok(self.chat.runtime_info()?)
+    }
+}
+
+impl Drop for TextChatRuntime {
+    fn drop(&mut self) {
+        self.chat.shutdown();
+        if let Some(handle) = self.event_thread.take() {
+            let _ = handle.join();
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1181,10 +1221,74 @@ fn setup_mdns(
     Ok(mdns)
 }
 
+fn start_text_chat(
+    username: &str,
+    network: &NetworkInterfaceInfo,
+) -> Result<TextChatRuntime, Box<dyn Error>> {
+    let config = ChatConfig::new(username.to_string())?
+        .with_interface(network.name.clone())?
+        .with_advertise_addr(IpAddr::V4(network.ip));
+    let (chat, event_receiver) = LanChat::start(config)?;
+    let runtime_info = chat.runtime_info()?;
+    let event_thread = Some(spawn_text_chat_event_thread(event_receiver));
+
+    Ok(TextChatRuntime {
+        chat,
+        runtime_info,
+        event_thread,
+    })
+}
+
+fn spawn_text_chat_event_thread(
+    event_receiver: std::sync::mpsc::Receiver<ChatEvent>,
+) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        while let Ok(event) = event_receiver.recv() {
+            match event {
+                ChatEvent::PeerDiscovered(peer) => {
+                    println!();
+                    println!(
+                        "{}",
+                        format!("[text discovered] {}", peer.display_name).cyan()
+                    );
+                }
+                ChatEvent::PeerConnected(peer) => {
+                    println!();
+                    println!(
+                        "{}",
+                        format!("[text connected] {}", peer.display_name).green()
+                    );
+                }
+                ChatEvent::PeerDisconnected(peer) => {
+                    println!();
+                    println!(
+                        "{}",
+                        format!("[text disconnected] {}", peer.display_name).yellow()
+                    );
+                }
+                ChatEvent::MessageReceived(message) => {
+                    println!();
+                    println!(
+                        "{}",
+                        format!("[text] {}: {}", message.display_name, message.body).magenta()
+                    );
+                }
+                ChatEvent::Warning(message) => {
+                    println!();
+                    println!("{}", format!("[text warning] {message}").yellow());
+                }
+            }
+            print!("> ");
+            let _ = io::stdout().flush();
+        }
+    })
+}
+
 fn print_startup(
     settings: &ApplicationSettings,
     local_peer: &LocalPeer,
     network: &RuntimeNetworkConfig,
+    text_chat: &ChatRuntimeInfo,
 ) {
     println!();
     println!("{}", "UDP Voice Peer".green().bold());
@@ -1192,6 +1296,8 @@ fn print_startup(
     println!("Listening on: {}", local_peer.socket_addr);
     println!("Network interface: {}", network.interface.label());
     println!("UDP port: {}", network.bind_port);
+    println!("Text chat room: {}", text_chat.room_name);
+    println!("Text chat listen: {}", text_chat.listen_addr);
     println!("Input device: {}", settings.input_device_name());
     println!("Output device: {}", settings.output_device_name());
     println!("Push-to-talk: off");
@@ -1209,6 +1315,9 @@ fn print_help() {
     println!("  talk on              Start transmitting microphone audio");
     println!("  talk off             Stop transmitting microphone audio");
     println!("  talk toggle          Toggle transmission on/off");
+    println!("  msg <text>           Send a text message to connected text peers");
+    println!("  text peers           List connected/discovered text peers");
+    println!("  text status          Show text chat room and listener info");
     println!("  stats                Show live packet/jitter stats");
     println!("  devices              Show current and available audio devices");
     println!("  network              Show current network interface and port");
@@ -1224,6 +1333,7 @@ fn command_loop(
     local_peer: LocalPeer,
     inventory: AudioDeviceInventory,
     network: RuntimeNetworkConfig,
+    text_chat: &TextChatRuntime,
     settings: &ApplicationSettings,
 ) -> Result<(), Box<dyn Error>> {
     loop {
@@ -1268,6 +1378,16 @@ fn command_loop(
                     }
                 );
             }
+            UserCommand::SendText(message) => {
+                if text_chat.peers().is_empty() {
+                    println!("{}", "No text peers discovered yet.".yellow());
+                    continue;
+                }
+                text_chat.send(message)?;
+                println!("{}", "Text message sent to current text peers.".green());
+            }
+            UserCommand::TextPeers => print_text_peers(text_chat),
+            UserCommand::TextStatus => print_text_status(text_chat)?,
             UserCommand::Stats => {
                 print_stats(
                     &stats,
@@ -1276,6 +1396,7 @@ fn command_loop(
                     &tx_enabled,
                     &local_peer,
                     &network,
+                    text_chat,
                     settings,
                 );
             }
@@ -1302,6 +1423,9 @@ enum UserCommand {
     SelectPeers(Vec<String>),
     TalkSet(bool),
     TalkToggle,
+    SendText(String),
+    TextPeers,
+    TextStatus,
     Stats,
     Devices,
     Network,
@@ -1327,6 +1451,18 @@ fn parse_user_command(input: &str) -> UserCommand {
         "devices" => UserCommand::Devices,
         "network" => UserCommand::Network,
         "exit" | "quit" => UserCommand::Exit,
+        "msg" | "say" => {
+            if remainder.is_empty() {
+                UserCommand::Unknown("Usage: msg <text>".to_string())
+            } else {
+                UserCommand::SendText(remainder.to_string())
+            }
+        }
+        "text" => match remainder {
+            "peers" => UserCommand::TextPeers,
+            "status" => UserCommand::TextStatus,
+            _ => UserCommand::Unknown("Usage: text peers | text status".to_string()),
+        },
         "select" => {
             if remainder.eq_ignore_ascii_case("all") {
                 UserCommand::SelectAll
@@ -1487,6 +1623,50 @@ fn print_network(network: &RuntimeNetworkConfig) {
     println!("  Preferences file: {}", network.preferences_path.display());
 }
 
+fn print_text_peers(text_chat: &TextChatRuntime) {
+    let peers = text_chat.peers();
+    if peers.is_empty() {
+        println!("{}", "No text peers discovered yet.".yellow());
+        return;
+    }
+
+    println!("{}", "Text peers:".cyan());
+    for peer in peers {
+        let addresses = peer
+            .addresses
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!(
+            "  {} [{}] -> {}",
+            peer.display_name, peer.peer_id, addresses
+        );
+    }
+}
+
+fn print_text_status(text_chat: &TextChatRuntime) -> Result<(), Box<dyn Error>> {
+    let runtime = text_chat.runtime_info()?;
+    println!("{}", "Text chat:".cyan());
+    println!("  Display name: {}", runtime.display_name);
+    println!("  Room: {}", runtime.room_name);
+    println!("  Auth required: {}", runtime.auth_required);
+    println!("  Listen address: {}", runtime.listen_addr);
+    println!(
+        "  Interface: {}",
+        runtime.mdns_interface.as_deref().unwrap_or("(automatic)")
+    );
+    println!(
+        "  Advertise address: {}",
+        runtime
+            .advertise_addr
+            .map(|address| address.to_string())
+            .unwrap_or_else(|| "(automatic)".to_string())
+    );
+    println!("  Connected peers: {}", text_chat.peers().len());
+    Ok(())
+}
+
 fn print_stats(
     stats: &RuntimeStats,
     peers: &SharedPeerTable,
@@ -1494,6 +1674,7 @@ fn print_stats(
     tx_enabled: &Arc<AtomicBool>,
     local_peer: &LocalPeer,
     network: &RuntimeNetworkConfig,
+    text_chat: &TextChatRuntime,
     settings: &ApplicationSettings,
 ) {
     let snapshot = stats.snapshot();
@@ -1504,6 +1685,7 @@ fn print_stats(
     println!("  Transmitting: {}", tx_enabled.load(Ordering::Relaxed));
     println!("  Route: {route}");
     println!("  Visible peers: {peer_count}");
+    println!("  Text peers: {}", text_chat.peers().len());
     println!("  Network interface: {}", network.interface.label());
     println!("  UDP port: {}", network.bind_port);
     println!("  Input device: {}", settings.input_device_name());
@@ -2053,5 +2235,22 @@ mod tests {
         assert_eq!(config.output_device_name.as_deref(), Some("Saved Speakers"));
         assert_eq!(config.network_interface_name.as_deref(), Some("en0"));
         assert_eq!(config.bind_port, Some(19_000));
+    }
+
+    #[test]
+    fn parser_accepts_text_commands() {
+        match parse_user_command("msg hello world") {
+            UserCommand::SendText(message) => assert_eq!(message, "hello world"),
+            _ => panic!("expected SendText command"),
+        }
+
+        assert!(matches!(
+            parse_user_command("text status"),
+            UserCommand::TextStatus
+        ));
+        assert!(matches!(
+            parse_user_command("text peers"),
+            UserCommand::TextPeers
+        ));
     }
 }

@@ -6,11 +6,12 @@ A simple UDP + mDNS application for real-time audio communication over a local n
 
 This application, developed solely by [Cuervo Blanco](https://github.com/cuervo-blanco), is part of an ongoing project with **Dimitri Médard**, a Film Production Mixer, to create a real-time communication app for iOS and Android. The goal is to establish quick and efficient audio communication using local networking. 
 
-The current codebase runs as a single peer application: every instance can discover peers with mDNS, listen for UDP audio, and transmit microphone audio with a command-driven push-to-talk workflow. The networking and buffering are still intentionally simple, but the project now behaves like a usable LAN voice prototype rather than a split client/server experiment.
+The current codebase runs as a single peer application: every instance can discover peers with mDNS, listen for UDP audio, transmit microphone audio with a command-driven push-to-talk workflow, and exchange LAN text messages through an embedded TCP chat runtime. The networking and buffering are still intentionally simple, but the project now behaves like a usable LAN voice-and-text prototype rather than a split client/server experiment.
 
 ## Features
 
 - **Real-time audio streaming** via UDP
+- **LAN text messaging** via TCP
 - **Peer discovery** over local networks using mDNS
 - **Opus audio encoding** for efficient audio compression
 - **Interactive Command Line Interface (CLI)**
@@ -55,7 +56,7 @@ cargo run --bin peer -- --interface en1 --bind-port 18521
 
 ### Command Interface
 
-Upon launching, the peer opens an interactive terminal setup screen unless you already supplied or saved the core setup values it needs. That screen lets you review the detected system-default mic/speakers, pick named audio devices, choose the LAN interface, set the UDP port, save preferences, refresh the device list, and then start the peer. Audio receive/playback starts immediately after setup, and microphone transmission is controlled from the CLI.
+Upon launching, the peer opens an interactive terminal setup screen unless you already supplied or saved the core setup values it needs. That screen lets you review the detected system-default mic/speakers, pick named audio devices, choose the LAN interface, set the UDP port, save preferences, refresh the device list, and then start the peer. Audio receive/playback starts immediately after setup, microphone transmission is controlled from the CLI, and text chat starts alongside the audio runtime on the same selected LAN interface.
 
 Available commands:
 
@@ -67,6 +68,9 @@ Available commands:
 - `talk on` - Start transmitting microphone audio
 - `talk off` - Stop transmitting microphone audio
 - `talk toggle` - Toggle transmission on or off
+- `msg <text>` - Send a text message to currently connected text peers
+- `text peers` - List text-chat peers discovered through the embedded TCP chat runtime
+- `text status` - Show the text chat room, listener address, and interface
 - `stats` - Show packet, jitter, and underflow stats
 - `devices` - Show current and available audio devices
 - `network` - Show the current network interface, bind address, and UDP port
@@ -77,6 +81,8 @@ Available commands:
 Audio setup defaults to 48 kHz mono Opus frames and attempts to select usable system input/output devices automatically. For most runs, the startup wizard is the easiest way to choose hardware and networking. If you prefer scripting or already know the device names, you can still use `--list-devices`, `--list-network`, `--input-device`, `--output-device`, `--interface`, and `--bind-port`.
 
 Saved preferences are stored in `.udp_voice_preferences` in the directory where you launch the app. Run with `--setup` any time you want to revisit and update them.
+
+Text messaging currently uses the embedded `libs/tcp_chat` crate with its default room and no shared secret. That keeps the first integration simple and lets every running peer on the same LAN exchange text once it discovers the others.
 
 On macOS, microphone access may also require enabling your terminal app under `System Settings > Privacy & Security > Microphone`.
 
@@ -94,9 +100,10 @@ The mDNS module manages peer discovery on the local network. Each peer publishes
 
 ### Networking
 
-- **Single Peer Runtime** - A single process both sends and receives audio.
+- **Single Peer Runtime** - A single process sends and receives audio while also running a TCP text-chat listener.
 - **UDP Socket Communication** - Each peer binds one UDP socket, advertises it over mDNS, and sends Opus packets directly to selected peers.
-- **mDNS for Device Discovery** - Enables peer presence and peer selection over a local network.
+- **Embedded TCP Chat Runtime** - The in-repo `libs/tcp_chat` crate handles room-scoped LAN text messaging over TCP.
+- **mDNS for Device Discovery** - Enables peer presence and peer selection over a local network for both the audio and text layers.
 
 ### Debugging
 

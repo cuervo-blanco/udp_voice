@@ -1,1 +1,4 @@
 /target
+.DS_Store
+/.udp_voice_preferences
+libs/**/target/

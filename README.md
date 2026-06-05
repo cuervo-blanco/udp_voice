@@ -6,9 +6,7 @@ A simple UDP + mDNS application for real-time audio communication over a local n
 
 This application, developed solely by [Cuervo Blanco](https://github.com/cuervo-blanco), is part of an ongoing project with **Dimitri Médard**, a Film Production Mixer, to create a real-time communication app for iOS and Android. The goal is to establish quick and efficient audio communication using local networking. 
 
-Currently, the mDNS (multicast DNS) discovery functionality is operational, allowing users to connect and see other users on the same network. While this real-time discovery of peers over a network is functional, the UDP audio streaming component is still under testing to optimize for reliability and low latency.
-
-**Note:** This project is on hold as we research solutions to enhance UDP reliability and security. UDP’s packet loss can be problematic for real-time audio but remains the fastest protocol for this use case.
+The current codebase runs as a single peer application: every instance can discover peers with mDNS, listen for UDP audio, and transmit microphone audio with a command-driven push-to-talk workflow. The networking and buffering are still intentionally simple, but the project now behaves like a usable LAN voice prototype rather than a split client/server experiment.
 
 ## Features
 
@@ -33,54 +31,72 @@ Currently, the mDNS (multicast DNS) discovery functionality is operational, allo
 
 ## Usage
 
-### Running the Application
+### Running the Peer App
 
-The project provides CLI executables for different roles:
-- **Client** (`src/main/client/main.rs`): Establishes communication by connecting to other peers on the network.
-- **Server** (`src/main/server/main.rs`): Manages audio reception and playback.
-- **Sine** (`src/main/sine/main.rs`): Generates a sine wave for audio testing.
-- **Test** (`src/main/test/main.rs`): Runs general application tests.
+The primary executable is `peer`:
 
-Each of these can be run with:
 ```sh
-cargo run --bin <binary_name>
+cargo run --bin peer
 ```
 
-For example:
+Legacy `client` and `server` binaries are still present, but they now launch the same peer runtime for compatibility.
+
+Useful startup flags:
+
 ```sh
-cargo run --bin client
+cargo run --bin peer -- --help
+cargo run --bin peer -- --list-devices
+cargo run --bin peer -- --list-network
+cargo run --bin peer -- --setup
+cargo run --bin peer -- --username dimitri
+cargo run --bin peer -- --input-device "Built-in Microphone" --output-device "MacBook Pro Speakers"
+cargo run --bin peer -- --interface en1 --bind-port 18521
 ```
 
 ### Command Interface
 
-Upon launching, the client prompts you to:
-1. **Enter a Username** - This username will display to other users on the network.
-2. **Enter Commands** - Supported commands:
-   - `send` - Starts the audio streaming process.
-   - `exit` - Exits the application.
+Upon launching, the peer opens an interactive terminal setup screen unless you already supplied or saved the core setup values it needs. That screen lets you review the detected system-default mic/speakers, pick named audio devices, choose the LAN interface, set the UDP port, save preferences, refresh the device list, and then start the peer. Audio receive/playback starts immediately after setup, and microphone transmission is controlled from the CLI.
+
+Available commands:
+
+- `help` - Show the command list
+- `peers` - List currently discovered peers
+- `select all` - Route microphone audio to every discovered peer
+- `select none` - Route microphone audio to nobody
+- `select <peer1,peer2>` - Route microphone audio only to named peers
+- `talk on` - Start transmitting microphone audio
+- `talk off` - Stop transmitting microphone audio
+- `talk toggle` - Toggle transmission on or off
+- `stats` - Show packet, jitter, and underflow stats
+- `devices` - Show current and available audio devices
+- `network` - Show the current network interface, bind address, and UDP port
+- `exit` - Exit the application
 
 ### Configuration
 
-Settings are configured in the code through the `Settings` struct. Key configurations include:
-- **Sample rate** and **buffer size** for audio quality.
-- **Channels** for mono or stereo configurations.
+Audio setup defaults to 48 kHz mono Opus frames and attempts to select usable system input/output devices automatically. For most runs, the startup wizard is the easiest way to choose hardware and networking. If you prefer scripting or already know the device names, you can still use `--list-devices`, `--list-network`, `--input-device`, `--output-device`, `--interface`, and `--bind-port`.
+
+Saved preferences are stored in `.udp_voice_preferences` in the directory where you launch the app. Run with `--setup` any time you want to revisit and update them.
+
+On macOS, microphone access may also require enabling your terminal app under `System Settings > Privacy & Security > Microphone`.
 
 ## Architecture
 
 ### mDNS Service
 
-The mDNS module manages peer discovery on the local network. Each client instance registers its presence, allowing other instances to detect new connections. This is crucial for a distributed communication system where multiple devices need to identify and connect with each other.
+The mDNS module manages peer discovery on the local network. Each peer publishes its UDP listen address and keeps a shared presence table of other visible peers.
 
 ### Audio Processing
 
-1. **Audio Generation and Capture** - The `sine` module allows testing with a generated sine wave to simulate audio input.
-2. **Encoding and Decoding with Opus** - Opus is used to compress audio data before transmission, optimizing bandwidth usage without sacrificing audio quality.
-3. **Buffer Management** - Ring buffers ensure smooth audio streaming by maintaining data flow between encoding, decoding, and playback processes.
+1. **Audio Capture** - CPAL captures microphone input and downs mixes it to mono frames suitable for Opus.
+2. **Encoding and Decoding with Opus** - Opus compresses 20 ms voice frames for low-latency UDP transmission.
+3. **Adaptive Jitter Buffering** - The receive path adjusts its packet cushion based on observed arrival jitter and playback underflows.
 
 ### Networking
 
-- **UDP Socket Communication** - A UDP socket facilitates low-latency transmission, though UDP does not guarantee delivery or order of packets, which can affect audio quality. 
-- **mDNS for Device Discovery** - Enables seamless peer-to-peer connections over a local network.
+- **Single Peer Runtime** - A single process both sends and receives audio.
+- **UDP Socket Communication** - Each peer binds one UDP socket, advertises it over mDNS, and sends Opus packets directly to selected peers.
+- **mDNS for Device Discovery** - Enables peer presence and peer selection over a local network.
 
 ### Debugging
 
@@ -89,13 +105,13 @@ Comprehensive logging is enabled with `log` and `env_logger` crates, providing r
 ## Challenges and Future Work
 
 ### Challenges
-- **Reliability of UDP for Audio** - The inherent packet loss in UDP is a major challenge for real-time audio. Exploring fallback options or adding redundancy mechanisms is under consideration.
-- **Debugging Network Issues** - Issues with packet transmission and loss require tools and strategies for efficient debugging.
+- **Reliability of UDP for Audio** - The inherent packet loss in UDP still needs stronger recovery strategies for harsh Wi-Fi conditions.
+- **Cross-Platform Device Handling** - Different host audio stacks expose devices and permissions differently, especially on macOS and mobile.
 
 ### Future Work
-- **iOS and Android Integration** - Extend the application to work on mobile platforms, allowing devices to function as walkie-talkies.
-- **Improved Audio Quality** - Optimize audio encoding settings to improve quality without adding latency.
-- **Security Enhancements** - Introduce measures to prevent packet interception or other security vulnerabilities.
+- **True Push-to-Talk UX** - Replace CLI commands with keyboard, GUI, or mobile touch controls.
+- **Duplex Session Controls** - Add mute state, per-peer talk indicators, reconnect handling, and persistent settings.
+- **Security Enhancements** - Introduce authentication and encryption for non-trusted networks.
 
 ## Acknowledgements
 

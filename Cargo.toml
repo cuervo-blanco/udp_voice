@@ -34,6 +34,10 @@ name = "client"
 path = "src/main/client/main.rs"
 
 [[bin]]
+name = "peer"
+path = "src/main/peer/main.rs"
+
+[[bin]]
 name = "server"
 path = "src/main/server/main.rs"
 
@@ -44,4 +48,3 @@ path = "src/main/sine/main.rs"
 [[bin]]
 name = "test"
 path = "src/main/test/main.rs"
-

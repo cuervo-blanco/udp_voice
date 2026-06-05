@@ -1,16 +1,16 @@
-use std::io::Write;
-use std::time::{Duration, Instant};
-use std::sync::mpsc::{Sender, Receiver};
-use cpal::SampleFormat;
-use cpal::traits::{DeviceTrait, StreamTrait};
-use std::f32::consts::PI;
-use ringbuf::{
-    traits::{Consumer, Producer, Split, Observer}, 
-    HeapRb,
-};
-use log::{info, warn};
 #[allow(unused_imports)]
 use colored::*;
+use cpal::traits::{DeviceTrait, StreamTrait};
+use cpal::SampleFormat;
+use log::{info, warn};
+use ringbuf::{
+    traits::{Consumer, Observer, Producer, Split},
+    HeapRb,
+};
+use std::f32::consts::PI;
+use std::io::Write;
+use std::sync::mpsc::{Receiver, Sender};
+use std::time::{Duration, Instant};
 
 pub struct Sine {
     frequency: f32,
@@ -20,34 +20,33 @@ pub struct Sine {
     value: Option<f32>,
 }
 impl Sine {
-
-    pub fn new (
-        frequency: f32, 
-        amplitude: f32, 
+    pub fn new(
+        frequency: f32,
+        amplitude: f32,
         sample_rate: u32,
         channels: usize,
         output: Sender<Vec<f32>>,
         buffer_size: usize,
-        ) -> Self {
-
-        info!("Sine::new - Initializing Sine Wave generator with frequency: {} Hz,
+    ) -> Self {
+        info!(
+            "Sine::new - Initializing Sine Wave generator with frequency: {} Hz,
         amplitude: {}, sample_rate: {}, channels: {}, buffer_size: {}",
-        frequency, amplitude, sample_rate, channels, buffer_size);
+            frequency, amplitude, sample_rate, channels, buffer_size
+        );
 
         let mut sine = Self {
             frequency,
             amplitude,
             sample_rate,
             channels,
-            value: None
+            value: None,
         };
 
-        std::thread::spawn( move || {
+        std::thread::spawn(move || {
             // println!("Sine::new - Sine wave generator thread started");
             let mut phase = 0.0 as f32;
             let phase_increment = 2.0 * PI * sine.frequency / sine.sample_rate as f32;
-            let interval = Duration::from_secs_f32(buffer_size as f32 / 
-                sine.sample_rate as f32);
+            let interval = Duration::from_secs_f32(buffer_size as f32 / sine.sample_rate as f32);
             loop {
                 let start = Instant::now();
                 let block: Vec<f32> = (0..buffer_size)
@@ -60,14 +59,16 @@ impl Sine {
                         sine.value = Some(sample);
                         std::iter::repeat(sample).take(channels as usize)
                     })
-                .collect();
+                    .collect();
 
                 //let sine_size = format!("SINE: Size of block: {}", block.len()).yellow();
                 //println!("{sine_size}");
 
-                if output.send(block).is_err(){
-                    warn!("SINE: Failed to send block, terminating sine
-                    wave generator thread");
+                if output.send(block).is_err() {
+                    warn!(
+                        "SINE: Failed to send block, terminating sine
+                    wave generator thread"
+                    );
                     break;
                 }
 
@@ -84,15 +85,17 @@ impl Sine {
     }
 
     pub fn play(
-        self, 
+        self,
         receiver: Receiver<Vec<f32>>,
         buffer_size: usize,
         device: cpal::Device,
         config: cpal::SupportedStreamConfig,
-        ) { 
-
-        info!("Sine::play - Starting playback with buffer_size: {},
-        sample_rate: {}, channels: {}", buffer_size, self.sample_rate, self.channels);
+    ) {
+        info!(
+            "Sine::play - Starting playback with buffer_size: {},
+        sample_rate: {}, channels: {}",
+            buffer_size, self.sample_rate, self.channels
+        );
 
         let ring = HeapRb::<f32>::new(buffer_size * self.channels);
         let (mut producer, mut consumer) = ring.split();
@@ -105,14 +108,15 @@ impl Sine {
                     while producer.is_full() {
                         std::thread::sleep(std::time::Duration::from_millis(1));
                     }
-                    producer.try_push(sample).expect("Sine::play - Failed to push into producer");
+                    producer
+                        .try_push(sample)
+                        .expect("Sine::play - Failed to push into producer");
                 }
                 print!("\rSine::play - Block successfully pushed to producer");
                 std::io::stdout().flush().unwrap();
             }
             warn!("Sine::play - Receiver channel closed producer thread exiting");
         });
-
 
         let sample_format = config.sample_format();
         let config: cpal::StreamConfig = config.into();
@@ -133,19 +137,20 @@ impl Sine {
                         // react to errors here.
                         eprintln!("Failed to output samples into stream: {}", err);
                     },
-                    None //None=blocking, Some(Duration)=timeout
+                    None, //None=blocking, Some(Duration)=timeout
                 )
-            },
+            }
             SampleFormat::I16 => {
                 warn!("Not yet implemented(I16)");
                 todo!();
-            },
+            }
             SampleFormat::U16 => {
                 warn!("Not yet implemented (U16)");
                 todo!();
             }
-            sample_format => panic!("Unsupported sample format '{sample_format}'")
-        }.unwrap();
+            sample_format => panic!("Unsupported sample format '{sample_format}'"),
+        }
+        .unwrap();
 
         info!("Sine::play - Output stream built succcessfully, starting playback");
 
@@ -153,7 +158,5 @@ impl Sine {
         loop {
             std::thread::sleep(std::time::Duration::from_millis(1000));
         }
-
     }
 }
-
